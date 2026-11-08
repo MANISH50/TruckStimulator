@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#14161a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="India Truck Simulator: a free 3D truck driving game for your phone browser. Drive across Indian states, carry cargo, refuel at diesel pumps and rest at dhabas.">
+<title>India Truck Simulator</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">{ "imports": { "three": "./js/lib/three.module.min.js" } }</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="vignette"></div>
+<div id="blink"></div>
+<canvas id="cracks"></canvas>
+<div id="flash"></div>
+
+<!-- ============ DRIVING HUD ============ -->
+<div id="hud" class="hidden">
+  <div id="tl">
+    <button id="bPause" class="rbtn" aria-label="Pause">❚❚</button>
+    <button id="bCam" class="rbtn" aria-label="Camera">🎥</button>
+    <button id="bMute" class="rbtn" aria-label="Mute">🔊</button>
+  </div>
+  <div id="camName"></div>
+  <div id="dash">
+    <div class="dcell speed"><b id="dSpeed">0</b><small>km/h</small></div>
+    <div class="dcell gear"><b id="dGear">D1</b><small id="dLimit">GEAR</small></div>
+    <div class="dcell bars">
+      <div class="bar"><span>⛽</span><i><em id="dFuel"></em></i></div>
+      <div class="bar"><span>😴</span><i><em id="dTired"></em></i></div>
+      <div class="bar"><span>📦</span><i><em id="dCargo"></em></i></div>
+    </div>
+    <div class="dcell dist"><b id="dDist">0.0</b><small>km left</small></div>
+    <div class="dcell arrow"><div id="dArrow">⬆</div><small id="dNext"></small></div>
+  </div>
+  <canvas id="minimap"></canvas>
+  <div id="msg"></div>
+  <div id="warn"></div>
+  <button id="ctxBtn" class="hidden">REFUEL</button>
+  <div id="parkBar" class="hidden"><i><em id="parkFill"></em></i><span>Parking…</span></div>
+
+  <div id="wheel">
+    <svg id="wheelImg" viewBox="-100 -100 200 200" aria-hidden="true">
+      <defs>
+        <radialGradient id="rimG" cx="50%" cy="40%" r="60%"><stop offset="0" stop-color="#555"/><stop offset="1" stop-color="#151515"/></radialGradient>
+      </defs>
+      <circle r="92" fill="none" stroke="url(#rimG)" stroke-width="16"/>
+      <circle r="92" fill="none" stroke="#000" stroke-opacity=".5" stroke-width="2"/>
+      <path d="M-84 -10 L-28 -8 L-24 12 L-80 18 Z" fill="#262626"/>
+      <path d="M84 -10 L28 -8 L24 12 L80 18 Z" fill="#262626"/>
+      <path d="M-14 26 L14 26 L10 86 L-10 86 Z" fill="#262626"/>
+      <circle r="30" fill="#1d1d1d" stroke="#c9a227" stroke-width="3"/>
+      <text y="5" text-anchor="middle" font-size="15" font-weight="700" fill="#c9a227" font-family="sans-serif">HORN</text>
+      <rect x="-6" y="-100" width="12" height="18" rx="3" fill="#ffd600"/>
+    </svg>
+  </div>
+  <button id="horn" class="pbtn">📯<small>HORN</small></button>
+  <div id="gears">
+    <button id="gR" class="gbtn">R</button>
+    <button id="gN" class="gbtn">N</button>
+    <button id="gD" class="gbtn on">D</button>
+  </div>
+  <button id="brake" class="pedal brake"><span>BRAKE</span></button>
+  <button id="accel" class="pedal accel"><span>ACCEL</span></button>
+</div>
+
+<!-- ============ SCREENS ============ -->
+<section id="menu" class="screen">
+  <div class="menuBox">
+    <div class="logo">🚚</div>
+    <h1>India Truck<br><span>Simulator</span></h1>
+    <p class="sub">Drive across India • Keep left • Deliver on time</p>
+    <button id="bPlay" class="big">▶ PLAY</button>
+    <p class="hint">Best in landscape with sound on 🔊</p>
+  </div>
+</section>
+
+<section id="garage" class="screen clear hidden">
+  <header><button class="back" data-go="menu">‹ Back</button><h2>Choose your truck</h2><span class="tag">All trucks unlocked</span></header>
+  <button id="gPrev" class="side left">‹</button>
+  <button id="gNext" class="side right">›</button>
+  <div class="panel bottom">
+    <div class="ttl"><h3 id="tName"></h3><p id="tDesc"></p></div>
+    <div id="tStats" class="stats"></div>
+    <div class="col">
+      <label class="toggle"><input type="checkbox" id="tGov"><span></span> Speed governor <b id="tGovTxt"></b></label>
+      <button id="gGo" class="big small">Choose cargo ›</button>
+    </div>
+  </div>
+</section>
+
+<section id="cargo" class="screen clear hidden">
+  <header><button class="back" data-go="garage">‹ Back</button><h2>Choose your cargo</h2><span class="tag">Every job unlocked</span></header>
+  <div class="panel right">
+    <div id="cargoList"></div>
+    <div id="cargoInfo"></div>
+    <button id="cGo" class="big small">Choose route ›</button>
+  </div>
+</section>
+
+<section id="route" class="screen hidden">
+  <header><button class="back" data-go="cargo">‹ Back</button><h2>Choose your route</h2><span class="tag" id="rStep">Tap a FROM city</span></header>
+  <div class="routeWrap">
+    <div id="mapBox"><svg id="map" viewBox="0 0 400 440"></svg></div>
+    <div class="panel sidepanel">
+      <div class="rrow"><span class="pill from">FROM</span><b id="rFrom">—</b></div>
+      <div class="rrow"><span class="pill to">TO</span><b id="rTo">—</b></div>
+      <div id="rInfo"></div>
+      <div class="btnRow"><button id="rSwap" class="ghost">⇅ Swap</button><button id="rClear" class="ghost">✕ Clear</button></div>
+      <button id="rGo" class="big small" disabled>Trip summary ›</button>
+    </div>
+  </div>
+</section>
+
+<section id="summary" class="screen hidden">
+  <div class="card">
+    <h2>Trip summary</h2>
+    <div id="sumBody"></div>
+    <div class="btnRow"><button class="ghost" data-go="route">‹ Change route</button><button id="sGo" class="big small">🚚 START DRIVING</button></div>
+  </div>
+</section>
+
+<section id="pause" class="screen hidden">
+  <div class="card narrow">
+    <h2>Paused</h2>
+    <button id="pResume" class="big small">▶ Resume</button>
+    <button id="pRestart" class="ghost wide">↻ Restart trip</button>
+    <button id="pQuit" class="ghost wide">⌂ Quit to menu</button>
+    <p class="hint">Steer: rotate the wheel • Hold pedals • Tap 🎥 to change view</p>
+  </div>
+</section>
+
+<section id="replayUI" class="screen clear hidden">
+  <div class="lb top"></div><div class="lb bottom"></div>
+  <div id="replayTag">● REPLAY</div>
+  <div id="replayAngle"></div>
+  <button id="replaySkip" class="ghost">Skip ›</button>
+</section>
+
+<section id="over" class="screen hidden">
+  <div class="card">
+    <h2 class="bad">GAME OVER</h2>
+    <p id="overReason" class="reason"></p>
+    <div id="overCard"></div>
+    <div class="btnRow"><button id="oAgain" class="big small">↻ Play again</button><button id="oRoute" class="ghost">🗺 Choose a new route</button></div>
+  </div>
+</section>
+
+<section id="win" class="screen hidden">
+  <div class="card">
+    <h2 class="good">DELIVERY COMPLETE</h2>
+    <div id="stars"></div>
+    <div id="winBody"></div>
+    <div class="btnRow"><button id="wAgain" class="big small">↻ Play again</button><button id="wRoute" class="ghost">🗺 Choose a new route</button></div>
+  </div>
+</section>
+
+<div id="loading" class="hidden"><div class="spinner"></div><p id="loadTxt">Loading cargo…</p></div>
+<div id="rotate"><div class="phone">📱</div><p>Please rotate your phone<br><b>Landscape only</b></p></div>
+<div id="fps" class="hidden"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
