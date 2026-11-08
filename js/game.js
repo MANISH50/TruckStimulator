@@ -159,7 +159,7 @@ export class Game {
     const i = r.idx(this.s);
     const grade = (r.y[i + 1] - r.y[i]) / STEP;
     const align = Math.cos(wrapAngle(t.heading - r.h[i]));
-    t.offroad = Math.abs(this.d) > 6.0 && !this._onPaved();
+    t.offroad = Math.abs(this.d) > r.edge[i] + 2.4 && !this._onPaved();
     t.update(dt, { steer: c.steer, throttle: c.throttle, brake: c.brake, gear: c.gear }, { slope: Math.atan(grade * align) });
     if (t.shiftEvent) { if (t.shiftEvent > 0 && t.throttle > 0.4) app.audio.blowoff(); t.shiftEvent = 0; }
 
@@ -207,8 +207,8 @@ export class Game {
 
   _onPaved() {
     const r = this.route;
-    for (const p of r.pumps) if (Math.abs(p.s - this.s) < 25 && this.d > 0 && this.d < 24) return true;
-    for (const p of r.dhabas) if (Math.abs(p.s - this.s) < 25 && this.d > 0 && this.d < 27) return true;
+    for (const p of r.pumps) if (Math.abs(p.s - this.s) < 25 && this.d > 0 && this.d < 24 + r.extraAt(p.s)) return true;
+    for (const p of r.dhabas) if (Math.abs(p.s - this.s) < 25 && this.d > 0 && this.d < 27 + r.extraAt(p.s)) return true;
     if (Math.abs(r.bayS - this.s) < 60 && this.d > 0 && this.d < 33) return true;
     if (r.zoneAt(this.s).type === 'city' && Math.abs(this.d) < 13) return true;
     for (const j of r.junctions) if (Math.abs(j.s - this.s) < 6) return true;
@@ -297,7 +297,7 @@ export class Game {
       if (!this.lightsNagged && this.darkNoLightsT > 2) { this.lightsNagged = true; this.msg('💡 It is getting dark — switch on your headlights!', 3.5); }
     }
     // driving in the right-hand lane for too long?
-    this.rightLaneT = this.d < -0.3 && this.d > -5 && t.v > 4 ? (this.rightLaneT || 0) + dt : 0;
+    this.rightLaneT = this.d < -0.3 && this.d > -(r.edge[r.idx(this.s)] + 1.5) && t.v > 4 ? (this.rightLaneT || 0) + dt : 0;
     // warnings
     const w = $('warn');
     let warn = '';
@@ -317,8 +317,8 @@ export class Game {
     let ctx = null;
     const slow = Math.abs(t.v) < 0.6;
     const sFront = this.s + t.L * 0.5;
-    for (const p of r.pumps) if (Math.abs(p.s - sFront) < 18 && this.d > 5 && this.d < 23) ctx = { kind: 'pump', p };
-    for (const p of r.dhabas) if (Math.abs(p.s - sFront) < 20 && this.d > 5 && this.d < 27) ctx = { kind: 'dhaba', p };
+    for (const p of r.pumps) { const ex = r.extraAt(p.s); if (Math.abs(p.s - sFront) < 18 && this.d > 5 + ex && this.d < 23 + ex) ctx = { kind: 'pump', p }; }
+    for (const p of r.dhabas) { const ex = r.extraAt(p.s); if (Math.abs(p.s - sFront) < 20 && this.d > 5 + ex && this.d < 27 + ex) ctx = { kind: 'dhaba', p }; }
     // hint when near
     if (!ctx) {
       for (const p of r.pumps) if (p.s - this.s > 0 && p.s - this.s < 120 && this.fuel < 70 && !p.hinted) { p.hinted = true; this.msg('⛽ Diesel pump ahead on the LEFT — pull in and stop', 3.5); }
@@ -389,9 +389,11 @@ export class Game {
     const vt = { x: Math.sin(t.heading) * t.v, z: Math.cos(t.heading) * t.v };
     const hit = (info) => {
       if (info.speed > 1.25) { this._accident(info); return true; }
-      // gentle touch: push back
+      // gentle touch: push back. Scraping along a median/wall at speed only slows the truck.
       t.x -= info.nx * Math.min(0.3, info.depth); t.z -= info.nz * Math.min(0.3, info.depth);
-      t.v *= -0.15;
+      const along = Math.abs(Math.sin(t.heading) * info.nx + Math.cos(t.heading) * info.nz) < 0.35;
+      if (along && Math.abs(t.v) > 3 && !info.other) { t.v *= 0.97; this.msg('⚠ Scraping the ' + (info.kind === 'median' ? 'median!' : 'side!'), 0.6); }
+      else t.v *= -0.15;
       if (info.other && !info.other.wreck) { info.other.v = 0; }
       return false;
     };
@@ -417,6 +419,14 @@ export class Game {
     // walls / barriers / buildings beside the road
     for (const tb of boxes) for (const q of boxCorners(tb)) {
       const p = r.project(q[0], q[1], this.hint, {});
+      // raised median on divided roads
+      const med = r.med[p.i];
+      if (med > 0.25 && Math.abs(p.d) < med) {
+        const h = r.h[p.i], side = this.d >= 0 ? 1 : -1;
+        const nx = -Math.cos(h) * side, nz = Math.sin(h) * side;
+        const closing = vt.x * nx + vt.z * nz;
+        if (hit({ kind: 'median', speed: Math.max(0, closing), nx, nz, px: q[0], pz: q[1], depth: med - Math.abs(p.d), part: tb.part })) return;
+      }
       const lim = p.d > 0 ? r.limL[p.i] : r.limR[p.i];
       if (Math.abs(p.d) > lim) {
         const h = r.h[p.i];
@@ -510,7 +520,7 @@ export class Game {
     app.audio.crash(intensity);
     if (navigator.vibrate) try { navigator.vibrate([80, 40, 160]); } catch (e) { /* */ }
     const names = { vehicle: other ? ({ car: 'a car', suv: 'an SUV', bus: 'a bus', auto: 'an auto-rickshaw', bike: 'a motorbike', truck: 'a truck', tractor: 'a tractor' }[other.type] || 'a vehicle') : 'a vehicle',
-      tree_avenue: 'a tree', tree_round: 'a tree', tree_neem: 'a tree', tree_palm: 'a palm tree', tree_khejri: 'a tree', pole: 'a pole', epole: 'an electric pole', signal: 'a traffic signal', cow: 'a cow', gate: 'the border gate', wall: 'a wall', pump: 'the pump canopy', building: 'a building', kmstone: 'a km stone', rock: 'a rock' };
+      median: 'the road median (divider)', tree_avenue: 'a tree', tree_round: 'a tree', tree_neem: 'a tree', tree_palm: 'a palm tree', tree_khejri: 'a tree', pole: 'a pole', epole: 'an electric pole', signal: 'a traffic signal', cow: 'a cow', gate: 'the border gate', wall: 'a wall', pump: 'the pump canopy', building: 'a building', kmstone: 'a km stone', rock: 'a rock' };
     this.crashWhat = info.kind === 'rollover' ? 'Your truck rolled over on a sharp turn!' : 'You crashed into ' + (names[info.kind] || names[info.other ? 'vehicle' : 'wall'] || 'the ' + info.kind) + (other && this.traffic.velocityOf(other) && info.part === 'trailer' ? ' (with your trailer)' : '') + '!';
     this.crashStats = { kmh: Math.round(info.speed * 3.6), tons: (t.mass / 1000).toFixed(1), cargoLost: rollover || intensity > 0.8 ? 100 : Math.round(30 + 50 * Math.min(1, intensity)) };
     app.audio.update(0, { rpm: 0, load: 0, throttle: 0, boost: 0, jake: 0, engineOn: false, speed: 0, offroad: false, ambient: 0.2, screech: 0, reverse: false });
@@ -830,7 +840,7 @@ export class Game {
   }
   _autopilot(c) {
     const r = this.route, t = this.truck;
-    const target = this.autoD ?? 1.75;
+    const target = this.autoD ?? r.laneD(this.s + 10, 1, 0);
     const look = this.s + 8 + Math.abs(t.v) * 0.9;
     const p = r.pos(look, target, {});
     const want = Math.atan2(p.x - t.x, p.z - t.z);

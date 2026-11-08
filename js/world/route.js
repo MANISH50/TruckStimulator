@@ -33,6 +33,7 @@ export class Route {
     this.bayS = this.length - 120;
     this.bay = { s: this.bayS, d: 18, l: 26, w: 4.6 };
     this._zones(R);
+    this._widths();
     this._centreline(R);
     this._heights(R);
     this._events(R);
@@ -82,6 +83,34 @@ export class Route {
       this.zi[i] = k;
     }
   }
+  // road width per sample: 2 lanes in cities, 4 lanes (divided) elsewhere, with tapers
+  _widths() {
+    const n = this.n;
+    const raw = new Float32Array(n);
+    for (let i = 0; i < n; i++) raw[i] = this.zones[this.zi[i]].type === 'city' ? 0 : 1;
+    const W = 35; // +-70 m taper
+    this.wide = new Float32Array(n); this.edge = new Float32Array(n); this.med = new Float32Array(n);
+    const pre = new Float32Array(n + 1);
+    for (let i = 0; i < n; i++) pre[i + 1] = pre[i] + raw[i];
+    for (let i = 0; i < n; i++) {
+      const a = Math.max(0, i - W), b = Math.min(n, i + W + 1);
+      const w = smooth((pre[b] - pre[a]) / (b - a));
+      // a city section always fully 2 lanes, so the taper happens just outside it
+      const f = raw[i] === 0 ? 0 : clamp((w - 0.5) * 2, 0, 1);
+      this.wide[i] = smooth(f);
+      this.edge[i] = ROAD_HALF + 4.0 * this.wide[i];
+      this.med[i] = 0.7 * this.wide[i];
+    }
+  }
+  extra(i) { return this.edge[i] - ROAD_HALF; }
+  extraAt(s) { return this.extra(this.idx(s)); }
+  // centre of a lane: lane 0 = left (slow), lane 1 = right (fast); dir +1 = our direction (positive d)
+  laneD(s, dir, lane) {
+    const i = this.idx(s);
+    const d = lane === 0 ? this.edge[i] - 1.85 : 1.75 + this.med[i];
+    return dir * d;
+  }
+
   zoneAt(s) { return this.zones[this.zi[clamp(Math.round(s / STEP), 0, this.n - 1)]]; }
 
   // ---------- centre line ----------
@@ -209,6 +238,7 @@ export class Route {
       const z = this.zoneAt(s);
       if (z.type === 'city' || z.type === 'hills') return false;
       const i = Math.round(s / STEP);
+      for (let j = i - 40; j <= i + 40; j++) if (j >= 0 && j < this.n && this.wide[j] < 0.999) return false;
       for (let j = i - 40; j <= i + 40; j++) if (j >= 0 && j < this.n && (Math.abs(this.k[j]) > 1 / 300 || this.hillAmt[j] > 0)) return false;
       for (const b of this.borders) if (Math.abs(b.s - s) < 120) return false;
       return true;
@@ -263,7 +293,8 @@ export class Route {
       if (this.hillAmt[i] > 0.6) {
         const hs = this.hillSide[i];
         // rock wall on hill side, crash barrier on valley side
-        if (hs > 0) { this.limL[i] = 7.0; this.limR[i] = 6.4; } else { this.limR[i] = 7.0; this.limL[i] = 6.4; }
+        const e = this.edge[i];
+        if (hs > 0) { this.limL[i] = e + 3.4; this.limR[i] = e + 2.8; } else { this.limR[i] = e + 3.4; this.limL[i] = e + 2.8; }
       } else if (z.type === 'city') {
         let free = false;
         for (const j of this.junctions) if (Math.abs(j.s - s) < 13) free = true;
@@ -296,12 +327,14 @@ export class Route {
     const a = this.hillAmt[i];
     let h = 0;
     const ad = Math.abs(d);
-    if (a > 0 && ad > 6.6) {
+    const e = this.edge[i];
+    if (a > 0 && ad > e + 3) {
       const hill = Math.sign(d) === this.hillSide[i];
-      if (hill) h = Math.min(45, (ad - 6.6) * 1.6) * a;
-      else h = -Math.min(55, (ad - 7.2) * 0.9) * a;
+      if (hill) h = Math.min(45, (ad - e - 3) * 1.6) * a;
+      else h = -Math.min(55, (ad - e - 3.6) * 0.9) * a;
     }
     if (ad > 5.6 && ad < 8.2 && this.zones[this.zi[i]].type === 'city') h += 0.15;
+    if (ad < this.med[i] - 0.05) h += 0.15 * this.wide[i];
     return h;
   }
   // project world x,z to (s, d). hint = sample index to search around.
