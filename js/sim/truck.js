@@ -138,6 +138,8 @@ export class Truck {
       F -= m * 0.35 * (this.rpm / REDLINE) * sgn;
       this.jake = clamp((av - 6) / 10, 0, 1) * (this.rpm / REDLINE);
     }
+    // dead engine: compression drag slows the truck to a stop
+    if (!this.engineOn) F -= m * 0.9 * Math.sign(this.v) * Math.min(1, av);
     // wind gusts for tall loads
     if (this.cargo.id === 'container' || this.cargo.id === 'cars') {
       this.gustT -= dt;

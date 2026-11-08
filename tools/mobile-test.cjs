@@ -55,7 +55,7 @@ const fullFlow = async (page, t) => {
   // tap Delhi then Jaipur on the map
   const city = async (name) => page.evaluate((n) => { const g = [...document.querySelectorAll('#map .city')].find((e) => e.textContent === n); const r = g.getBoundingClientRect(); return [r.left + 8, r.top + r.height / 2]; }, name);
   for (const n of ['Delhi', 'Jaipur']) { const c = await city(n); await t.touch('touchStart', [[c[0], c[1]]]); await t.touch('touchEnd', []); await page.waitForTimeout(250); }
-  t.check('route', await t.g(() => document.getElementById('rFrom').textContent + ' -> ' + document.getElementById('rTo').textContent));
+  t.check('route', await t.g(() => document.getElementById('rFromSel').value + ' -> ' + document.getElementById('rToSel').value));
   await t.shot('06-route');
   await t.tapEl('#rGo'); await page.waitForTimeout(400);
   await t.shot('07-summary');
@@ -64,6 +64,8 @@ const fullFlow = async (page, t) => {
   await t.shot('08-loading');
   await page.waitForTimeout(3000);
   t.check('state', await t.g(() => window.__game && window.__game.state));
+  // controls test: clear traffic so the blind test drive cannot hit anything
+  await t.g(() => { const g = window.__game; g.traffic.density = 0; g.traffic.list.slice().forEach((o) => g.traffic.remove(o)); });
   await t.shot('09-drive');
   // hold accelerator (touch id 1) for 6 s
   const acc = await t.center('#accel');

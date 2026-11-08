@@ -22,18 +22,33 @@ export class RouteMap {
       t.textContent = STATES[code].name;
     }
     this.line = el('path', { class: 'rline', d: '' });
+    svg.addEventListener('pointerdown', (e) => this._tap(e));
     this.nodes = {};
     for (const c of CITIES) {
       const [x, y] = proj(c.lon, c.lat);
       const g = el('g', { class: 'city', transform: `translate(${x},${y})` });
-      el('circle', { r: 22, class: 'hit' }, g);
       el('circle', { r: 6, class: 'dot' }, g);
-      const t = el('text', { x: 9, y: 4 }, g);
+      const pos = { mumbai: 'left', kochi: 'left', jodhpur: 'left', bengaluru: 'left', jaipur: 'below', agra: 'above', ahmedabad: 'below' }[c.id] || 'right';
+      const t = el('text', pos === 'left' ? { x: -9, y: 4, 'text-anchor': 'end' } : pos === 'below' ? { x: 0, y: 17, 'text-anchor': 'middle' } : pos === 'above' ? { x: 0, y: -9, 'text-anchor': 'middle' } : { x: 9, y: 4 }, g);
       t.textContent = c.name;
-      if (['mumbai', 'kochi', 'ahmedabad', 'jodhpur'].includes(c.id)) { t.setAttribute('x', -9); t.setAttribute('text-anchor', 'end'); }
-      g.addEventListener('pointerdown', (e) => { e.preventDefault(); this.pick(c.id); });
       this.nodes[c.id] = { g, x, y };
     }
+  }
+  // tap anywhere: pick the nearest city (big, forgiving touch targets)
+  _tap(e) {
+    e.preventDefault();
+    const pt = this.svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    const ctm = this.svg.getScreenCTM();
+    if (!ctm) return;
+    const q = pt.matrixTransform(ctm.inverse());
+    let best = null, bd = 34 * 34;
+    for (const id in this.nodes) {
+      const n = this.nodes[id];
+      const d = (n.x - q.x) ** 2 + (n.y - q.y) ** 2;
+      if (d < bd) { bd = d; best = id; }
+    }
+    if (best) this.pick(best);
   }
   pick(id) {
     if (!this.from || (this.from && this.to)) { this.from = id; this.to = null; }

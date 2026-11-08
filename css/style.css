@@ -143,6 +143,8 @@ header h2 { margin: 0; font-size: 20px; text-shadow: 0 2px 4px #000; }
 .rrow { display: flex; align-items: center; gap: 8px; font-size: 18px; }
 .pill { font-size: 11px; font-weight: 900; padding: 3px 8px; border-radius: 10px; }
 .pill.from { background: var(--good); color: #032; } .pill.to { background: var(--bad); color: #300; }
+.rrow select { flex: 1; min-height: 44px; font: inherit; font-size: 16px; font-weight: 700; color: var(--text); background: #262a31; border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; }
+#map { touch-action: none; }
 #rInfo { font-size: 13px; color: var(--muted); flex: 1; }
 #rInfo b { color: var(--text); }
 .btnRow { display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; margin-top: 8px; }

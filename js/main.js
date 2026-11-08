@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { TRUCKS, truckById } from './data/trucks.js';
 import { CARGO, cargoById, canCarry } from './data/cargo.js';
-import { STATES, cityById } from './data/cities.js';
+import { STATES, CITIES, cityById } from './data/cities.js';
 import { tripInfo } from './world/route.js';
 import { Controls } from './ui/controls.js';
 import { MiniMap } from './ui/minimap.js';
@@ -110,6 +110,15 @@ class App {
     tap('cGo', () => this.showScreen('route'));
     // route
     this.map = new RouteMap($('map'), (f, t) => { this.sel.from = f; this.sel.to = t; this._routeInfo(); });
+    for (const [id, which] of [['rFromSel', 'from'], ['rToSel', 'to']]) {
+      const sel = $(id);
+      sel.innerHTML = '<option value="">— tap a city —</option>' + CITIES.map((c) => `<option value="${c.id}">${c.name} (${STATES[c.state].name})</option>`).join('');
+      sel.addEventListener('change', () => {
+        const v = sel.value || null;
+        if (which === 'from') this.map.set(v, this.map.to === v ? null : this.map.to);
+        else this.map.set(this.map.from, v === this.map.from ? null : v);
+      });
+    }
     tap('rSwap', () => this.map.swap());
     tap('rClear', () => this.map.clear());
     tap('rGo', () => this.showScreen('summary'));
@@ -186,8 +195,7 @@ class App {
   }
   _routeInfo() {
     const f = this.sel.from, t = this.sel.to;
-    $('rFrom').textContent = f ? cityById(f).name + ' (' + STATES[cityById(f).state].name + ')' : '—';
-    $('rTo').textContent = t ? cityById(t).name + ' (' + STATES[cityById(t).state].name + ')' : '—';
+    $('rFromSel').value = f || ''; $('rToSel').value = t || '';
     $('rStep').textContent = !f ? 'Tap a FROM city' : !t ? 'Now tap a TO city' : 'Route ready!';
     $('rGo').disabled = !(f && t);
     if (f && t) {

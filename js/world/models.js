@@ -125,7 +125,8 @@ export function addCargo(b, cargo, w, l, y0, zc, sides = 0) {
       for (let i = 0; i < l / 0.5; i++) {
         b.box(w * 0.99 + 0.02, h * 0.96, 0.08, 0, y0 + h / 2, z0 + 0.25 + i * 0.5, i % 2 ? col : '#2a2a2a');
       }
-      b.box(w * 0.98, h * 0.98, 0.04, 0, y0 + h / 2, zc - l * 0.49 - 0.02, '#333');
+      b.box(w * 0.98, h * 0.98, 0.04, 0, y0 + h / 2, zc - l * 0.49 - 0.02, col);
+      b.box(0.06, h * 0.96, 0.05, 0, y0 + h / 2, zc - l * 0.49 - 0.03, '#222');
       return y0 + h;
     }
     case 'veg': {

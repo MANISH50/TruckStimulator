@@ -85,6 +85,7 @@ export class Game {
     this.model.cargoGroup.visible = true;
     if (this.model.trailer) this.model.trailer.cargoGroup.visible = true;
     this.world.update(s, true);
+    this.traffic.populate(s);
     this.rec.track(this.model.root);
     this.rec.track(this.model.cargoGroup);
     if (this.model.trailer) { this.rec.track(this.model.trailer.group); this.rec.track(this.model.trailer.cargoGroup); }
@@ -261,6 +262,8 @@ export class Game {
         this.redLights++; this.msg('🚦 You jumped a red light!', 2.5); this.app.audio.chime(false);
       }
     }
+    // driving in the right-hand lane for too long?
+    this.rightLaneT = this.d < -0.3 && this.d > -5 && t.v > 4 ? (this.rightLaneT || 0) + dt : 0;
     // warnings
     const w = $('warn');
     let warn = '';
@@ -268,7 +271,7 @@ export class Game {
     else if (this.fuel < 15 && t.engineOn) warn = '⛽ LOW FUEL — find a diesel pump';
     else if (this.tired > 85) warn = '😴 VERY TIRED — rest at a dhaba';
     else if (t.offroad && Math.abs(t.v) > 3) warn = '↩ OFF ROAD';
-    else if (this.d < 0 && this.d > -4 && Math.abs(t.v) > 8 && this.app.overtakeNag < 0) warn = 'Keep LEFT ←';
+    else if (this.rightLaneT > 6) warn = '← KEEP LEFT (India drives on the left)';
     w.textContent = warn; w.style.display = warn ? 'block' : 'none';
     // approaching destination
     if (!this.destMsg && r.bayS - this.s < 420) { this.destMsg = true; this.msg('🏁 Depot ahead — park in the YELLOW BAY on the left', 5); }
@@ -734,6 +737,7 @@ export class Game {
     this.hint = r.idx(s); this.s = s; this.prevS = s; this.d = d;
     this.world.update(s, true);
     this.traffic.list.slice().forEach((o) => this.traffic.remove(o));
+    this.traffic.populate(s);
     this.borderIdx = r.borders.filter((b) => b.s < s).length;
     this._placeModel(0);
     this.rig.inited = false;

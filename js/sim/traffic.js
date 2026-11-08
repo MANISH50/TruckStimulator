@@ -65,6 +65,21 @@ export class Traffic {
     return o;
   }
 
+  // fill the road around s with traffic (start of a trip / after a teleport)
+  populate(sP) {
+    const route = this.route;
+    const zone = route.zoneAt(sP).type;
+    const n = Math.round((TARGET[zone] || 10) * this.density * 0.8);
+    for (let k = 0; k < n * 3 && this.list.length < n; k++) {
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      const s = sP + (dir > 0 ? 40 + Math.random() * 360 : 60 + Math.random() * 380);
+      if (s < 60 || s > route.bayS - 150) continue;
+      if (this.list.some((o) => Math.abs(o.s - s) < 22 && o.dir === dir)) continue;
+      if (route.junctions.some((j) => Math.abs(j.s - s) < 25)) continue;
+      this.spawn(s, dir, this.pickType(route.zoneAt(s).type));
+    }
+  }
+
   remove(o) {
     this.group.remove(o.mesh);
     if (o.mesh.userData.ownGeo) o.mesh.geometry.dispose();
@@ -138,6 +153,7 @@ export class Traffic {
           }
         }
       }
+      o.lead = leader ? leader.id : 0; o.gap = gap;
       // curve speed
       const ahead = route.k[route.idx(o.s + o.dir * 30)];
       const vCurve = Math.sqrt(3.2 / Math.max(1e-4, Math.abs(ahead)));
@@ -152,12 +168,17 @@ export class Traffic {
       o.s += o.dir * o.v * dt;
 
       // overtaking decision
-      if (!o.overtaking && o.aggressive && leader && leader.ref && gap < 25 && leader.v * o.dir < o.v0 - 2.5 && o.type !== 'bus') {
+      if (!o.overtaking && o.aggressive && leader && (leader.ref || leader.id === -1) && gap < 42 && leader.v * o.dir < o.v0 - 2.5 && o.type !== 'bus') {
         if (this._canOvertake(o, all, route)) { o.overtaking = true; o.targetD = -o.laneD; o.overtakeT = 0; o.passing = leader.id; }
       }
       if (o.overtaking) {
         o.overtakeT += dt;
-        const passed = !this.list.some((q) => q.id === o.passing && (q.s - o.s) * o.dir > -o.len - 8);
+        const tg = all.filter((b) => b.id === o.passing);
+        let passed = !tg.length;
+        if (tg.length) {
+          if (o.dir > 0) passed = o.s - o.len / 2 > Math.max(...tg.map((b) => b.s1)) + 7;
+          else passed = o.s + o.len / 2 < Math.min(...tg.map((b) => b.s0)) - 7;
+        }
         let danger = false;
         for (const b of all) {
           if (b.id === o.id) continue;
@@ -186,7 +207,7 @@ export class Traffic {
       if (b.id === o.id) continue;
       if (Math.abs(b.d + o.laneD) < 2.5) {
         const g = (b.s0 - o.s) * o.dir;
-        if (g > -15 && g < 230) return false;
+        if (g > -15 && g < 190) return false;
       }
     }
     return true;
