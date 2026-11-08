@@ -33,13 +33,27 @@ function rearPanel(w, h) {
 }
 
 const dialCache = {};
-function dialTexture(kind) {
-  if (dialCache[kind]) return dialCache[kind];
-  dialCache[kind] = canvasTexture(128, 128, (g, w, h) => {
+function dialTexture(kind, maxV = 120) {
+  const key = kind + maxV;
+  if (dialCache[key]) return dialCache[key];
+  dialCache[key] = canvasTexture(128, 128, (g, w, h) => {
     g.fillStyle = '#0d0d0d'; g.beginPath(); g.arc(64, 64, 63, 0, 7); g.fill();
     g.strokeStyle = '#c9a227'; g.lineWidth = 4; g.beginPath(); g.arc(64, 64, 60, 0, 7); g.stroke();
-    const max = kind === 'speed' ? 120 : 30, step = kind === 'speed' ? 20 : 5;
-    g.fillStyle = '#fff'; g.font = 'bold 13px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    if (kind === 'fuel') {
+      // half dial: E (left) to F (right)
+      for (let k = 0; k <= 4; k++) {
+        const a = Math.PI + (k / 4) * Math.PI;
+        g.strokeStyle = k === 0 ? '#ff3d00' : '#fff'; g.lineWidth = 4;
+        g.beginPath(); g.moveTo(64 + Math.cos(a) * 42, 74 + Math.sin(a) * 42); g.lineTo(64 + Math.cos(a) * 54, 74 + Math.sin(a) * 54); g.stroke();
+      }
+      g.fillStyle = '#ff3d00'; g.font = 'bold 18px sans-serif'; g.fillText('E', 22, 90);
+      g.fillStyle = '#fff'; g.fillText('F', 106, 90);
+      g.font = '20px sans-serif'; g.fillText('⛽', 64, 100);
+      return;
+    }
+    const max = kind === 'speed' ? maxV : 30, step = kind === 'speed' ? (maxV > 140 ? 40 : 20) : 5;
+    g.fillStyle = '#fff'; g.font = 'bold 13px sans-serif';
     for (let v = 0; v <= max; v += step / 2) {
       const a = Math.PI * 0.75 + (v / max) * Math.PI * 1.5;
       const major = v % step === 0;
@@ -50,7 +64,37 @@ function dialTexture(kind) {
     g.font = 'bold 10px sans-serif'; g.fillStyle = '#c9a227';
     g.fillText(kind === 'speed' ? 'km/h' : 'x100 rpm', 64, 92);
   });
-  return dialCache[kind];
+  return dialCache[key];
+}
+
+// headlight beam on the road (soft trapezoid, drawn additively)
+let _beamTex = null;
+function beamTexture() {
+  if (_beamTex) return _beamTex;
+  _beamTex = canvasTexture(128, 256, (g, w, h) => {
+    const img = g.createImageData(w, h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const t = 1 - y / h;                  // 0 near truck (bottom) .. 1 far (top)
+      const half = 0.18 + 0.32 * t;         // beam widens with distance
+      const u = Math.abs(x / w - 0.5) / half;
+      let a = u < 1 ? (1 - u * u) : 0;
+      a *= Math.min(1, (1 - t) * 3) * (0.35 + 0.65 * (1 - t)) * Math.min(1, t * 8 + 0.2);
+      const i = (y * w + x) * 4;
+      img.data[i] = 255; img.data[i + 1] = 244; img.data[i + 2] = 200; img.data[i + 3] = Math.round(a * 255);
+    }
+    g.putImageData(img, 0, 0);
+  });
+  return _beamTex;
+}
+let _glowTex = null;
+export function glowTexture() {
+  if (_glowTex) return _glowTex;
+  _glowTex = canvasTexture(64, 64, (g) => {
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.25, 'rgba(255,255,255,0.8)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  });
+  return _glowTex;
 }
 
 // ---------- cargo ----------
@@ -333,20 +377,29 @@ export function buildPlayerTruck(spec, cargo) {
   ib.box(W, 0.06, 0.08, 0, eyeY - 0.27, cabFront - 0.08, col);
   const interiorMesh = ib.mesh();
   interior.add(interiorMesh);
-  // gauges (speed + rpm) with moving needles
-  const gauges = [];
-  for (const [k, gx] of [['speed', 0.13], ['rpm', -0.13]]) {
-    const dial = new THREE.Mesh(new THREE.CircleGeometry(0.1, 20), new THREE.MeshBasicMaterial({ map: dialTexture(k) }));
+  // gauges (speed, rpm, fuel) with moving needles
+  const gauges = {};
+  const vMax = spec.vmax > 100 ? Math.ceil((spec.vmax + 5) / 20) * 20 : 120;
+  for (const [k, gx, r] of [['speed', 0.13, 0.1], ['rpm', -0.13, 0.1], ['fuel', -0.33, 0.065]]) {
+    const dial = new THREE.Mesh(new THREE.CircleGeometry(r, 20), new THREE.MeshBasicMaterial({ map: dialTexture(k, vMax) }));
     const holder = new THREE.Group();
-    holder.position.set(seatX + gx * 0.9, eyeY - 0.26, dashZ0 + 0.02);
+    holder.position.set(seatX + gx * 0.9, eyeY - 0.26 - (k === 'fuel' ? 0.02 : 0), dashZ0 + 0.02);
     holder.rotation.set(-0.35, Math.PI, 0);
     holder.add(dial);
-    const nb = new Builder(); nb.box(0.008, 0.085, 0.004, 0, 0.04, 0, '#ff3d00');
-    const needle = nb.mesh(); needle.position.z = 0.004;
+    const nb = new Builder(); nb.box(0.008, r * 0.85, 0.004, 0, r * 0.4, 0, '#ff3d00');
+    const needle = nb.mesh(); needle.position.set(0, k === 'fuel' ? -r * 0.15 : 0, 0.004);
     holder.add(needle);
     interior.add(holder);
-    gauges.push(needle);
+    gauges[k] = needle;
   }
+  gauges.vMax = vMax;
+  // warning lamps on the dash: headlights (blue) and low fuel (amber)
+  const lampG = new THREE.SphereGeometry(0.012, 8, 6);
+  gauges.headLamp = new THREE.Mesh(lampG, new THREE.MeshBasicMaterial({ color: '#10203a' }));
+  gauges.fuelLamp = new THREE.Mesh(lampG, new THREE.MeshBasicMaterial({ color: '#3a2a08' }));
+  gauges.headLamp.position.set(seatX + 0.03, eyeY - 0.17, dashZ0 + 0.04);
+  gauges.fuelLamp.position.set(seatX - 0.03, eyeY - 0.17, dashZ0 + 0.04);
+  interior.add(gauges.headLamp, gauges.fuelLamp);
   // steering wheel
   const sw = new Builder();
   sw.addGeometry(new THREE.TorusGeometry(0.23, 0.03, 6, 20), '#6d4c41');
@@ -361,6 +414,37 @@ export function buildPlayerTruck(spec, cargo) {
   interior.add(steerPivot);
   interior.visible = false;
   root.add(interior);
+
+  // ---- lights (headlamps, glow, beam on the road, tail lamps)
+  const lights = { on: false };
+  const headMat = new THREE.MeshBasicMaterial({ color: '#cfc9ad' });
+  const tailMat = new THREE.MeshBasicMaterial({ color: '#4a0d0d' });
+  lights.headMat = headMat; lights.tailMat = tailMat;
+  const lampY = cabBottom + 0.25;
+  lights.glows = [];
+  for (const sx of [1, -1]) {
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.23, 0.05), headMat);
+    lamp.position.set(sx * (W / 2 - 0.3), lampY, cabFront + 0.035);
+    root.add(lamp);
+    const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: '#fff6d0', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    gl.position.set(sx * (W / 2 - 0.3), lampY, cabFront + 0.25);
+    gl.scale.set(1.6, 1.6, 1.6);
+    gl.visible = false;
+    root.add(gl); lights.glows.push(gl);
+  }
+  const beamMat = new THREE.MeshBasicMaterial({ map: beamTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.5, polygonOffset: true, polygonOffsetFactor: -4 });
+  const beam = new THREE.Mesh(new THREE.PlaneGeometry(13, 34), beamMat);
+  beam.rotation.x = -Math.PI / 2;
+  beam.position.set(0, 0.08, cabFront + 17.5);
+  beam.visible = false;
+  root.add(beam);
+  lights.beam = beam;
+  const tailZ = tractor ? null : rearZ - 0.03;
+  if (tailZ !== null) for (const sx of [1, -1]) {
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.04), tailMat);
+    tl.position.set(sx * (W / 2 - 0.25), frameY - 0.2, tailZ);
+    root.add(tl);
+  }
 
   // ---- wheels
   const wheels = [];
@@ -433,11 +517,16 @@ export function buildPlayerTruck(spec, cargo) {
     const p = rearPanel(W * 0.7, 0.55);
     p.position.set(0, 0.95, back - 0.05);
     tg.add(p);
+    for (const sx of [1, -1]) {
+      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.04), lights.tailMat);
+      tl.position.set(sx * (W / 2 - 0.25), 0.75, back - 0.06);
+      tg.add(tl);
+    }
     trailer = { group: tg, body: tBody, cargoGroup: tCargoGroup, cargoMesh: tCargo, wheels: tw, length: Lt, axle: -axleZ, front, back, deckY, top: tTop };
   }
 
   return {
-    root, body, cabShell, interior, steerPivot, gauges, wheels, frontWheels, cargoGroup, cargoMesh, trailer,
+    root, body, cabShell, interior, steerPivot, gauges, lights, wheels, frontWheels, cargoGroup, cargoMesh, trailer,
     wheelR, cabFront, cabBack, rearZ, cabTop, cargoTop: Math.max(cargoTop, cabTop),
     seat: new THREE.Vector3(seatX, eyeY, eyeZ),
     hitchZ: 0.3,

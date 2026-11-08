@@ -18,10 +18,11 @@ button { font: inherit; color: inherit; border: 0; cursor: pointer; touch-action
 #hud { position: fixed; inset: 0; pointer-events: none; }
 #hud > * { pointer-events: auto; }
 #hud #msg, #hud #warn, #hud #camName, #hud #dash, #hud #parkBar { pointer-events: none; }
-#tl { position: absolute; top: calc(8px + var(--st)); left: calc(10px + var(--sl)); display: flex; gap: 8px; }
+#tl { position: absolute; top: calc(8px + var(--st)); left: calc(10px + var(--sl)); display: grid; grid-template-columns: repeat(2, auto); gap: 6px; }
+#tl .rbtn { width: 46px; height: 46px; font-size: 18px; }
 .rbtn { width: 50px; height: 50px; border-radius: 50%; background: var(--panel); border: 2px solid var(--line); font-size: 20px; font-weight: 800; display: grid; place-items: center; }
 .rbtn:active { transform: scale(0.94); background: #333; }
-#camName { position: absolute; top: calc(64px + var(--st)); left: calc(12px + var(--sl)); font-size: 12px; color: var(--accent2); text-shadow: 0 1px 2px #000; font-weight: 700; }
+#camName { position: absolute; top: calc(112px + var(--st)); left: calc(12px + var(--sl)); font-size: 12px; color: var(--accent2); text-shadow: 0 1px 2px #000; font-weight: 700; }
 
 #dash { position: absolute; top: calc(6px + var(--st)); left: 50%; transform: translateX(-50%);
   display: flex; align-items: stretch; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 4px 6px; }
@@ -29,7 +30,6 @@ button { font: inherit; color: inherit; border: 0; cursor: pointer; touch-action
 .dcell:last-child { border-right: 0; }
 .dcell b { font-size: 24px; line-height: 1; font-variant-numeric: tabular-nums; }
 .dcell small { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }
-.dcell.speed b { font-size: 30px; color: #fff; }
 .dcell.gear b { color: var(--accent2); }
 .dcell.bars { gap: 3px; min-width: 112px; }
 .bar { display: flex; align-items: center; gap: 4px; width: 100%; font-size: 11px; }
@@ -39,7 +39,7 @@ button { font: inherit; color: inherit; border: 0; cursor: pointer; touch-action
 #dNext { max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
 
 #minimap { position: absolute; top: calc(6px + var(--st)); right: calc(8px + var(--sr)); width: clamp(96px, 30vh, 150px); height: clamp(96px, 30vh, 150px); border-radius: 50%; pointer-events: none !important; }
-#msg { position: absolute; top: calc(70px + var(--st)); left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 10px; background: rgba(0,0,0,.55); font-weight: 700; font-size: 15px; text-align: center; opacity: 0; transition: opacity .3s; white-space: nowrap; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; }
+#msg { position: absolute; top: calc(clamp(68px, 21vh, 92px) + 4px + var(--st)); left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 10px; background: rgba(0,0,0,.55); font-weight: 700; font-size: 15px; text-align: center; opacity: 0; transition: opacity .3s; white-space: nowrap; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; }
 #msg.show { opacity: 1; }
 #warn { position: absolute; top: 34%; left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 10px; background: rgba(200,20,20,.8); font-weight: 900; font-size: 16px; display: none; animation: blinkA .5s infinite alternate; }
 @keyframes blinkA { to { opacity: .55; } }
@@ -184,3 +184,30 @@ header h2 { margin: 0; font-size: 20px; text-shadow: 0 2px 4px #000; }
   .rbtn { width: 44px; height: 44px; }
   .panel.bottom p { display: none; }
 }
+
+/* analog speedometer + fuel gauge */
+.dcell.speedo { padding: 0 4px; min-width: 0; }
+.dcell.speedo svg { width: clamp(58px, 17vh, 76px); height: clamp(58px, 17vh, 76px); display: block; }
+.dialBg { fill: #0d0f12; stroke: #c9a227; stroke-width: 2.5; }
+.dialArc { fill: none; stroke: #ff4d4d; stroke-width: 4; }
+.tick { stroke: #ddd; stroke-width: 1.4; }
+.tick.major { stroke: #fff; stroke-width: 2.4; }
+.tickNum { fill: #ddd; font-size: 9px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
+.needle { fill: #ff3d00; }
+.hub { fill: #c9a227; stroke: #222; stroke-width: 1; }
+.dialNum { fill: #fff; font-size: 15px; font-weight: 900; text-anchor: middle; font-variant-numeric: tabular-nums; }
+.dialUnit { fill: #999; font-size: 7px; text-anchor: middle; }
+.dcell.fuelg { min-width: 70px; padding: 0 6px; gap: 1px; }
+.dcell.fuelg svg { width: 66px; height: 40px; display: block; }
+.fuelArc { fill: none; stroke: #fff; stroke-width: 2; }
+.fuelRed { fill: none; stroke: #ff3b3b; stroke-width: 4; }
+.fuelLbl { fill: #fff; font-size: 9px; font-weight: 900; text-anchor: middle; }
+.lamps { display: flex; gap: 6px; font-size: 12px; line-height: 1; }
+.lamp { padding: 1px 4px; border-radius: 4px; filter: grayscale(1) brightness(.35); }
+.lamp.fuel.on { filter: none; background: #ffb300; color: #000; animation: blinkA .45s infinite alternate; }
+.lamp.head.on { filter: none; background: #2979ff; color: #fff; font-weight: 900; }
+#bLights { color: #888; }
+#bLights.on { color: #fff59d; background: #3b3a12; border-color: #fff59d; box-shadow: 0 0 14px rgba(255,245,157,.7); }
+.todRow { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.tod { background: rgba(255,255,255,.08); border: 1px solid var(--line); border-radius: 20px; padding: 6px 12px; min-height: 40px; font-weight: 700; }
+.tod.on { background: var(--accent2); color: #222; }

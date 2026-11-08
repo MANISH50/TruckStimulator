@@ -33,12 +33,17 @@ Turn your phone sideways: the game is played in **landscape only**.
   - rollovers
   - a 3-angle slow-motion replay
 - **4 camera views:** driver seat (dashboard, gauges, steering wheel), side, top and back (chase).
+- **Gauges and lights:**
+  - an analog speedometer whose needle rises and falls as you accelerate and brake (red zone above the speed limit)
+  - a fuel gauge (E–F) with a blinking low-fuel warning lamp, on the HUD and in the cab
+  - headlights with a beam on the road, tail lamps, and a headlight indicator
+  - choose **Day, Evening or Night** on the trip summary; at night other vehicles and street lamps glow, and driving without headlights costs stars
 - **Sound made in code:** diesel engine synthesiser (firing pulses, knock, turbo whistle, exhaust brake), air horn, air brakes, tyre squeal, crash sounds, reverse beeper and traffic ambience. Mute button included.
 
 ## How to play
 
 1. Tap **PLAY**, choose a truck, then a cargo.
-2. On the map, tap a **FROM** city and a **TO** city (or use the drop-down lists). Check the trip summary and tap **START DRIVING**.
+2. On the map, tap a **FROM** city and a **TO** city (or use the drop-down lists). On the trip summary, pick Day, Evening or Night, then tap **START DRIVING**.
 3. Drive:
 
 | Control | What it does |
@@ -49,6 +54,7 @@ Turn your phone sideways: the game is played in **landscape only**.
 | 🎥 | Switch camera: back → driver → side → top |
 | ❚❚ | Pause (Resume / Restart / Quit) |
 | 🔊 | Mute / unmute |
+| Headlight button (top-left) | Headlights on / off |
 | ⛽ REFUEL / 🍲 REST | Appear when you stop inside a pump or dhaba bay on the left side of the road. |
 
 4. **Win:** reach the destination depot and stop with the whole truck inside the **yellow parking bay** (a floating arrow marks it). You get 1–3 stars for speed, safe driving and parking accuracy, plus your earnings.
@@ -69,6 +75,7 @@ On a computer you can use the keyboard:
 - **P**: pause
 - **M**: mute
 - **E**: refuel or rest
+- **L**: headlights
 
 ## Run it locally
 

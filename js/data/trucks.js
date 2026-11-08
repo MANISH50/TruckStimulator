@@ -38,3 +38,6 @@ export const TRUCKS = [
 ];
 
 export function truckById(id) { return TRUCKS.find((t) => t.id === id) || TRUCKS[1]; }
+
+// top of the speedometer scale for this truck
+export function dialMax(spec) { return spec.vmax > 100 ? Math.ceil((spec.vmax + 5) / 20) * 20 : 120; }

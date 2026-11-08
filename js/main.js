@@ -1,6 +1,6 @@
 // App shell: screens (menu, truck, cargo, route, summary), renderer, main loop.
 import * as THREE from 'three';
-import { TRUCKS, truckById } from './data/trucks.js';
+import { TRUCKS, truckById, dialMax } from './data/trucks.js';
 import { CARGO, cargoById, canCarry } from './data/cargo.js';
 import { STATES, CITIES, cityById } from './data/cities.js';
 import { tripInfo } from './world/route.js';
@@ -40,7 +40,7 @@ class App {
     this.overtakeNag = 0;
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem('its_sel') || '{}'); } catch (e) { /* */ }
-    this.sel = Object.assign({ truck: 'cargo', cargo: 'goods', from: 'delhi', to: 'jaipur', governor: true }, saved);
+    this.sel = Object.assign({ truck: 'cargo', cargo: 'goods', from: 'delhi', to: 'jaipur', governor: true, tod: 'day' }, saved);
     this._wire();
     this._resize();
     addEventListener('resize', () => this._resize());
@@ -127,6 +127,9 @@ class App {
     tap('bPause', () => this.pause());
     tap('bCam', () => this._camera());
     tap('bMute', () => this._mute());
+    tap('bLights', () => this.game && this.game.toggleLights());
+    for (const b of document.querySelectorAll('.tod')) b.addEventListener('click', () => { this.sel.tod = b.dataset.tod; this.save(); this._todUI(); this.audio.click(); });
+    this._fuelTicks();
     $('ctxBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); this.game && this.game.useContext(); });
     tap('pResume', () => this.resume());
     tap('pRestart', () => this.startTrip());
@@ -143,6 +146,7 @@ class App {
       if ((e.code === 'KeyP' || e.code === 'Escape') && this.game) { this.game.state === 'paused' ? this.resume() : this.pause(); }
       if (e.code === 'KeyM') this._mute();
       if (e.code === 'KeyE' && this.game) this.game.useContext();
+      if (e.code === 'KeyL' && this.game) this.game.toggleLights();
     });
     this._updateMuteIcon();
   }
@@ -204,7 +208,9 @@ class App {
       this.save();
     } else $('rInfo').innerHTML = 'Tap cities on the map. 14 cities in 11 states.';
   }
+  _todUI() { for (const b of document.querySelectorAll('.tod')) b.classList.toggle('on', b.dataset.tod === this.sel.tod); }
   _summaryUI() {
+    this._todUI();
     const info = tripInfo(this.sel.from, this.sel.to);
     const t = truckById(this.sel.truck), c = cargoById(this.sel.cargo);
     $('sumBody').innerHTML = `<div class="kv">
@@ -212,6 +218,36 @@ class App {
       <div><small>Distance</small><b>${info.realKm} km</b></div><div><small>Estimated time</small><b>${Math.round(info.estSec / 60)} min</b></div>
       <div><small>Truck</small><b>${t.name}</b></div><div><small>Cargo</small><b>${c.icon} ${c.name}</b></div>
     </div><p class="hint">Route: ${info.states.map((s) => STATES[s].name).join(' → ')} • Game road ${(info.gameM / 1000).toFixed(1)} km<br>⛽ Refuel at diesel pumps • 🍲 Rest at dhabas • 🚦 Stop at red lights • Keep LEFT</p>`;
+  }
+
+  // build the analog speedometer scale for this truck (red zone above the speed limit)
+  _speedoUI(spec, limit) {
+    const max = dialMax(spec);
+    this.speedoMax = max;
+    const ang = (v) => (-135 + (v / max) * 270) * Math.PI / 180;
+    let h = '';
+    const step = max > 140 ? 40 : 20;
+    for (let v = 0; v <= max; v += 10) {
+      const a = ang(v), sx = Math.sin(a), cy = -Math.cos(a);
+      const major = v % step === 0;
+      const r1 = major ? 37 : 41;
+      h += `<line class="tick${major ? ' major' : ''}" x1="${(sx * r1).toFixed(1)}" y1="${(cy * r1).toFixed(1)}" x2="${(sx * 45).toFixed(1)}" y2="${(cy * 45).toFixed(1)}"/>`;
+      if (major) h += `<text class="tickNum" x="${(sx * 28).toFixed(1)}" y="${(cy * 28).toFixed(1)}">${v}</text>`;
+    }
+    $('speedTicks').innerHTML = h;
+    const lim = limit || max;
+    const a0 = ang(Math.min(lim, max)), a1 = ang(max), R = 45;
+    const large = a1 - a0 > Math.PI ? 1 : 0;
+    $('speedArc').setAttribute('d', lim < max ? `M${(Math.sin(a0) * R).toFixed(1)} ${(-Math.cos(a0) * R).toFixed(1)} A${R} ${R} 0 ${large} 1 ${(Math.sin(a1) * R).toFixed(1)} ${(-Math.cos(a1) * R).toFixed(1)}` : '');
+    this.needleV = 0;
+  }
+  _fuelTicks() {
+    let h = '';
+    for (let k = 0; k <= 4; k++) {
+      const a = (-90 + k * 45) * Math.PI / 180, sx = Math.sin(a), cy = -Math.cos(a);
+      h += `<line class="tick major" x1="${(sx * 21).toFixed(1)}" y1="${(cy * 21).toFixed(1)}" x2="${(sx * 27).toFixed(1)}" y2="${(cy * 27).toFixed(1)}"/>`;
+    }
+    $('fuelTicks').innerHTML = h;
   }
 
   startTrip() {
@@ -226,7 +262,8 @@ class App {
     $('loadTxt').textContent = 'Building the road…';
     // let the loading text paint first
     setTimeout(() => {
-      this.game = new Game(this, { spec, cargo, from: this.sel.from, to: this.sel.to, governor: this.sel.governor });
+      this.game = new Game(this, { spec, cargo, from: this.sel.from, to: this.sel.to, governor: this.sel.governor, tod: this.sel.tod });
+      this._speedoUI(spec, this.game.truck.limitKmh);
       this.game.camera.aspect = this.w / this.h; this.game.camera.updateProjectionMatrix();
       this.audio.setupEngine(spec.cyl, spec.id === 'mini' ? 0.7 : spec.id === 'turbo' ? 1.25 : 1);
       this._camName();
@@ -273,7 +310,15 @@ class App {
     const g = this.game;
     if (g) {
       g.update(dtReal);
+      g.updateLights();
       this.renderer.render(g.scene, g.camera);
+      if (g.state === 'drive') {
+        // speedometer needle follows the speed smoothly as you accelerate / brake
+        const v = g.truck.speedKmh;
+        this.needleV += (v - this.needleV) * Math.min(1, dtReal * 10);
+        const deg = -135 + Math.min(1.03, this.needleV / this.speedoMax) * 270 + (g.truck.engineOn && v < 1 ? Math.sin(now / 60) * 0.6 : 0);
+        $('speedNeedle').setAttribute('transform', `rotate(${deg.toFixed(1)})`);
+      }
       if (g.state === 'drive') {
         this.hudT -= dtReal;
         if (this.hudT <= 0) { this.hudT = 0.1; this._hud(g.hudData()); }
@@ -309,7 +354,10 @@ class App {
       const bad = inv ? v > 75 : v < 20, mid = inv ? v > 50 : v < 40;
       e.style.background = bad ? '#ff4d4d' : mid ? '#ffb020' : '#3ddc84';
     };
-    bar('dFuel', d.fuel); bar('dTired', d.tired, true); bar('dCargo', d.cargo);
+    bar('dTired', d.tired, true); bar('dCargo', d.cargo);
+    $('fuelNeedle').setAttribute('transform', `rotate(${(-90 + Math.max(0, Math.min(100, d.fuel)) * 1.8).toFixed(1)})`);
+    $('lampFuel').classList.toggle('on', d.fuel < 15);
+    $('lampHead').classList.toggle('on', !!d.lights);
     $('dDist').textContent = d.left.toFixed(1);
     $('dArrow').style.transform = `rotate(${(-d.ang * 180 / Math.PI).toFixed(0)}deg)`;
     $('dNext').textContent = d.next;

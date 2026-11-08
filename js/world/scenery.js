@@ -90,6 +90,7 @@ export class World {
     this.dirty = true;
     this.ahead = 520; this.behind = 140;
     this.bayArrow = null;
+    this.lampPositions = []; this.lampVersion = 0;
   }
 
   setDrawDistance(ahead) { this.ahead = ahead; }
@@ -126,6 +127,15 @@ export class World {
       im.setColorAt(k, it.c);
       counts[it.p] = k + 1;
     }
+    // street-lamp heads (for night glows)
+    this.lampPositions = [];
+    const v = new THREE.Vector3();
+    for (const ch of this.chunks.values()) for (const it of ch.items) {
+      if (it.p !== 'pole') continue;
+      v.set(1.3, 7.6, 0).applyMatrix4(it.m);
+      this.lampPositions.push(v.clone());
+    }
+    this.lampVersion = (this.lampVersion || 0) + 1;
     for (const p of PROTOS) {
       const im = this.inst[p];
       im.count = counts[p];

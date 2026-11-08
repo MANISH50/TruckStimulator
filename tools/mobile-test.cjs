@@ -73,6 +73,8 @@ const fullFlow = async (page, t) => {
   await page.waitForTimeout(6000);
   t.check('speedAfterAccel', await t.g(() => Math.round(window.__game.truck.speedKmh)));
   t.check('gear', await t.g(() => window.__game.truck.gearLabel));
+  t.check('speedoNeedle', await t.g(() => document.getElementById('speedNeedle').getAttribute('transform')));
+  t.check('fuelNeedle', await t.g(() => document.getElementById('fuelNeedle').getAttribute('transform')));
   await t.shot('10-accelerating');
   // rotate the wheel with a second finger while holding accel (short, gentle steer)
   const w = await t.center('#wheel');
@@ -118,6 +120,10 @@ const fullFlow = async (page, t) => {
   t.check('paused', await t.g(() => window.__game.state));
   await t.tapEl('#pResume');
   t.check('resumed', await t.g(() => window.__game.state));
+  // headlights
+  await t.tapEl('#bLights'); t.check('lightsOn', await t.g(() => window.__game.model.lights.on));
+  await t.shot('14-lights');
+  await t.tapEl('#bLights'); t.check('lightsOff', await t.g(() => !window.__game.model.lights.on));
   // mute
   await t.tapEl('#bMute'); t.check('muted', await t.g(() => window.__app.audio.muted)); await t.tapEl('#bMute');
   t.check('fps', await t.g(() => document.getElementById('fps').textContent));

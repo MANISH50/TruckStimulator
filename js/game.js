@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { clamp, lerp, wrapAngle, fmtTime } from './util.js';
 import { Route, STEP } from './world/route.js';
 import { World } from './world/scenery.js';
-import { buildPlayerTruck } from './world/models.js';
+import { buildPlayerTruck, glowTexture } from './world/models.js';
 import { Truck, truckBoxes } from './sim/truck.js';
 import { Traffic } from './sim/traffic.js';
 import { boxBox, circleBox, boxCorners } from './sim/collision.js';
@@ -15,6 +15,24 @@ import { STATES } from './data/cities.js';
 const $ = (id) => document.getElementById(id);
 const tmpP = {};
 
+const TOD = {
+  day: { name: 'day', mix: 0, mixCol: '#ffffff', hemi: 1.25, hemiSky: '#fff6e0', hemiGround: '#5a6040', sun: 2.0, sunColor: '#fff3d6', sunY: 120, fog: 1, glow: 0, beam: 0.28 },
+  evening: { name: 'evening', mix: 0.55, mixCol: '#e8875a', hemi: 0.85, hemiSky: '#ffd0a8', hemiGround: '#4a3a30', sun: 1.1, sunColor: '#ffa060', sunY: 25, fog: 0.85, glow: 0.7, beam: 0.6 },
+  night: { name: 'night', mix: 0.88, mixCol: '#0a1430', hemi: 0.42, hemiSky: '#8090c0', hemiGround: '#151520', sun: 0.35, sunColor: '#a8b8ff', sunY: 90, fog: 0.7, glow: 1, beam: 0.95 },
+};
+
+function makeLightPoints(scene, n, size, color = '#fff4cc') {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(n * 3), 3));
+  g.setDrawRange(0, 0);
+  const m = new THREE.PointsMaterial({ color, size: Math.max(0.01, size), map: glowTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+  const p = new THREE.Points(g, m);
+  p.frustumCulled = false;
+  p.visible = size > 0.01;
+  scene.add(p);
+  return p;
+}
+
 export class Game {
   constructor(app, sel) {
     this.app = app;
@@ -23,13 +41,19 @@ export class Game {
     this.spec = spec; this.cargo = cargo;
     this.route = new Route(sel.from, sel.to);
     this.scene = new THREE.Scene();
-    const sky = new THREE.Color(this.route.themeAt(0).sky);
+    // time of day: day / evening / night
+    this.tod = TOD[sel.tod] || TOD.day;
+    const sky = this.skyFor(0);
     this.scene.background = sky.clone();
-    this.scene.fog = new THREE.Fog(sky.clone(), 120, app.quality.fog);
-    this.hemi = new THREE.HemisphereLight('#fff6e0', '#5a6040', 1.25);
-    this.sun = new THREE.DirectionalLight('#fff3d6', 2.0);
-    this.sun.position.set(-60, 120, 40);
+    this.scene.fog = new THREE.Fog(sky.clone(), 120 * this.tod.fog, app.quality.fog * this.tod.fog);
+    this.hemi = new THREE.HemisphereLight(this.tod.hemiSky, this.tod.hemiGround, this.tod.hemi);
+    this.sun = new THREE.DirectionalLight(this.tod.sunColor, this.tod.sun);
+    this.sun.position.set(-60, this.tod.sunY, 40);
     this.scene.add(this.hemi, this.sun);
+    // lights of other vehicles and street lamps (only drawn in the evening / at night)
+    this.aiLights = makeLightPoints(this.scene, 200, 0.75 * this.tod.glow);
+    this.aiTail = makeLightPoints(this.scene, 200, 0.55 * this.tod.glow, '#ff2a1a');
+    this.lampLights = makeLightPoints(this.scene, 300, 1.4 * this.tod.glow, '#ffe9a8');
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1200);
     this.rig = new CameraRig(this.camera);
     if (app.lastView) this.rig.view = app.lastView;
@@ -86,6 +110,8 @@ export class Game {
     if (this.model.trailer) this.model.trailer.cargoGroup.visible = true;
     this.world.update(s, true);
     this.traffic.populate(s);
+    this.setLights(this.tod.name === 'night');
+    this.lightsNagged = false; this.darkNoLightsT = 0;
     this.rec.track(this.model.root);
     this.rec.track(this.model.cargoGroup);
     if (this.model.trailer) { this.rec.track(this.model.trailer.group); this.rec.track(this.model.trailer.cargoGroup); }
@@ -101,6 +127,7 @@ export class Game {
   }
 
   dispose() {
+    for (const p of [this.aiLights, this.aiTail, this.lampLights]) { this.scene.remove(p); p.geometry.dispose(); }
     this.world.dispose(); this.traffic.dispose(); this.fx.dispose(); this.debris.dispose();
     this.scene.traverse((o) => { if (o.geometry && o.userData.ownGeo) o.geometry.dispose(); });
   }
@@ -206,8 +233,11 @@ export class Game {
     m.steerPivot.children[0].rotation.z = this.app.controls.wheelDeg * Math.PI / 180;
     if (m.interior.visible) {
       // needles sweep 270 degrees: speed 0-120, rpm 0-3000 (clockwise as seen by the driver)
-      m.gauges[0].rotation.z = 2.356 - Math.min(1, t.speedKmh / 120) * 4.712;
-      m.gauges[1].rotation.z = 2.356 - Math.min(1, t.rpm / 3000) * 4.712;
+      const G = m.gauges;
+      G.speed.rotation.z = 2.356 - Math.min(1, t.speedKmh / G.vMax) * 4.712;
+      G.rpm.rotation.z = 2.356 - Math.min(1, t.rpm / 3000) * 4.712;
+      G.fuel.rotation.z = Math.PI / 2 - Math.min(1, this.fuel / 100) * Math.PI;
+      G.fuelLamp.material.color.set(this.fuel < 15 && (this.simT * 2.2) % 1 < 0.6 ? '#ffb300' : '#3a2a08');
     }
     if (m.trailer) {
       const tg = m.trailer.group;
@@ -251,8 +281,7 @@ export class Game {
         if (txt) this.msg(txt, 3);
       }
       this.zoneIdx = zi;
-      const sky = new THREE.Color(r.themeAt(this.s).sky);
-      this.skyTarget = sky;
+      this.skyTarget = this.skyFor(this.s);
     }
     if (this.skyTarget) { this.scene.background.lerp(this.skyTarget, Math.min(1, dt * 0.5)); this.scene.fog.color.copy(this.scene.background); }
     // red lights
@@ -261,6 +290,11 @@ export class Game {
       if (this.prevS < stop && this.s >= stop && Math.abs(this.d) < 4 && r.signalState(j, this.simT) === 'red') {
         this.redLights++; this.msg('🚦 You jumped a red light!', 2.5); this.app.audio.chime(false);
       }
+    }
+    // headlights in the dark
+    if (this.tod.name !== 'day' && !this.model.lights.on && Math.abs(t.v) > 3) {
+      this.darkNoLightsT += dt;
+      if (!this.lightsNagged && this.darkNoLightsT > 2) { this.lightsNagged = true; this.msg('💡 It is getting dark — switch on your headlights!', 3.5); }
     }
     // driving in the right-hand lane for too long?
     this.rightLaneT = this.d < -0.3 && this.d > -5 && t.v > 4 ? (this.rightLaneT || 0) + dt : 0;
@@ -629,7 +663,7 @@ export class Game {
     if (kind === 'win') {
       const est = this.route.estSec;
       const timeScore = this.tripT <= est ? 1 : this.tripT <= est * 1.35 ? 0.7 : 0.4;
-      const safe = clamp(1 - this.redLights * 0.2 - this.offroadT / 40 - (100 - this.cargoCond) / 200, 0, 1);
+      const safe = clamp(1 - this.redLights * 0.2 - this.offroadT / 40 - (100 - this.cargoCond) / 200 - this.darkNoLightsT / 60, 0, 1);
       const park = this.parkAcc ?? 0.5;
       let score = (timeScore + safe + park) / 3;
       if (this.cargo.timed && this.tripT > est * 1.25) score -= 0.2;
@@ -729,6 +763,58 @@ export class Game {
     this.fuelUsedL = (this.fuelUsedL || 0) + t.fuelBurn(dt) * 3.5;
   }
 
+  // ---------- lights & time of day ----------
+  skyFor(s) {
+    const c = new THREE.Color(this.route.themeAt(s).sky);
+    return c.lerp(new THREE.Color(this.tod.mixCol), this.tod.mix);
+  }
+  setLights(on) {
+    const L = this.model.lights;
+    L.on = on;
+    L.headMat.color.set(on ? '#ffffff' : '#cfc9ad');
+    L.tailMat.color.set(on ? '#ff2a1a' : '#4a0d0d');
+    for (const g of L.glows) { g.visible = on; g.material.opacity = 0.5 + 0.5 * this.tod.beam; }
+    L.beam.visible = on;
+    L.beam.material.opacity = this.tod.beam;
+    this.model.gauges.headLamp.material.color.set(on ? '#2979ff' : '#10203a');
+    $('bLights').classList.toggle('on', on);
+    $('lampHead').classList.toggle('on', on);
+  }
+  toggleLights() {
+    if (!['drive', 'intro'].includes(this.state)) return;
+    this.setLights(!this.model.lights.on);
+    this.app.audio.click();
+    this.msg(this.model.lights.on ? '💡 Headlights ON' : 'Headlights OFF', 1.2);
+  }
+  // headlight / tail-light glows for traffic and street lamps (evening & night)
+  updateLights() {
+    if (!this.aiLights.visible) return;
+    const P = this.aiLights.geometry.attributes.position, T = this.aiTail.geometry.attributes.position;
+    let k = 0, j = 0;
+    const all = this.traffic.list.concat(this.traffic.crossers);
+    for (const o of all) {
+      const mp = o.mesh.position, h = o.mesh.rotation.y;
+      const ch = Math.cos(h), sh = Math.sin(h);
+      const hl = o.len / 2, hw = o.type === 'bike' ? 0 : o.wid * 0.36;
+      for (const sx of o.type === 'bike' ? [0] : [1, -1]) {
+        if (k >= P.count || j >= T.count) break;
+        const lx = sx * hw;
+        P.setXYZ(k++, mp.x + ch * lx + sh * (hl + 0.1), mp.y + 0.75, mp.z - sh * lx + ch * (hl + 0.1));
+        T.setXYZ(j++, mp.x + ch * lx - sh * (hl + 0.1), mp.y + 0.85, mp.z - sh * lx - ch * (hl + 0.1));
+      }
+    }
+    P.needsUpdate = true; T.needsUpdate = true;
+    this.aiLights.geometry.setDrawRange(0, k); this.aiTail.geometry.setDrawRange(0, j);
+    if (this.world.lampVersion !== this.lampVer) {
+      this.lampVer = this.world.lampVersion;
+      const L = this.lampLights.geometry.attributes.position;
+      let n = 0;
+      for (const p of this.world.lampPositions) { if (n >= L.count) break; L.setXYZ(n++, p.x, p.y, p.z); }
+      L.needsUpdate = true;
+      this.lampLights.geometry.setDrawRange(0, n);
+    }
+  }
+
   // ---------- debug helpers (only used by tests with ?debug=1) ----------
   teleport(s, d = 1.75, v = 0) {
     const r = this.route, p = r.pos(s, d, {});
@@ -774,6 +860,6 @@ export class Game {
     if (want === 'pump' && pump) next = '⛽ ' + ((pump.s - this.s) / 1000).toFixed(1);
     else if (dh) next = '🍲 ' + ((dh.s - this.s) / 1000).toFixed(1);
     else if (pump) next = '⛽ ' + ((pump.s - this.s) / 1000).toFixed(1);
-    return { speed: Math.round(t.speedKmh), gear: t.gear === 'D' ? 'D' + t.dg : t.gear, fuel: this.fuel, tired: this.tired, cargo: this.cargoCond, left, ang, next, limit: t.limitKmh };
+    return { speed: Math.round(t.speedKmh), gear: t.gear === 'D' ? 'D' + t.dg : t.gear, fuel: this.fuel, tired: this.tired, cargo: this.cargoCond, left, ang, next, limit: t.limitKmh, lights: this.model.lights.on };
   }
 }
