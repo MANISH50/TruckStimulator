@@ -181,6 +181,8 @@ export class World {
 
     const put = (p, s, d, rot = 0, sx = 1, sy = 1, sz = 1, color = null, collideR = 0, yOff = 0, pitch = 0) => {
       if (s < 0 || s > route.length) return;
+      // roadside objects move outward on wide (4-lane) roads
+      if (d !== 0) d = Math.sign(d) * (Math.abs(d) + route.extraAt(s));
       route.pos(s, d, _p);
       _e.set(pitch, _p.h + rot, 0, 'YXZ');
       _q.setFromEuler(_e);
@@ -229,6 +231,7 @@ export class World {
       } else {
         // highway / hills
         const dens = th.treeDensity;
+        if (route.wide[i] > 0.9 && Math.floor(s / 6) % 2 === 0 && !nearBorder) put('bush', s + 1, 0, R() * 6, 0.45, 0.7, 0.45, tint(0.3), 0, 0.15);
         if (!hill) {
           // avenue trees with painted trunks
           if (!nearStop && !nearBorder && Math.floor(s / 6) % 3 === 0 && R() < 0.5 * dens) for (const sd of [1, -1]) if (R() < 0.7) put(th.trees.includes('palm') ? 'tree_palm' : th.trees.includes('khejri') ? 'tree_khejri' : 'tree_avenue', s + R() * 3, sd * R.range(9.5, 11), R() * 6, 1, R.range(0.85, 1.15), 1, tint(), 0.35);
@@ -288,15 +291,17 @@ export class World {
     };
     // colour-preserving merge (addGeometry tints with white = keep colours)
     for (const p of route.pumps) if (p.s >= s0 && p.s < s1) {
-      addGeo(pumpStationGeo(), p.s, 15, Math.PI);
+      const ex = route.extraAt(p.s);
+      addGeo(pumpStationGeo(), p.s, 15 + ex, Math.PI);
       const pillars = [[-4.5, -7], [-4.5, 7], [-4.5, -4], [-4.5, 4]];
-      for (const [x, zz] of pillars) { route.pos(p.s - zz, 15 - x, _p); cols.push({ x: _p.x, z: _p.z, r: 0.6, kind: 'pump' }); }
-      route.pos(p.s - 13.5, 8, _p); cols.push({ x: _p.x, z: _p.z, r: 0.3, kind: 'pole' });
+      for (const [x, zz] of pillars) { route.pos(p.s - zz, 15 + ex - x, _p); cols.push({ x: _p.x, z: _p.z, r: 0.6, kind: 'pump' }); }
+      route.pos(p.s - 13.5, 8 + ex, _p); cols.push({ x: _p.x, z: _p.z, r: 0.3, kind: 'pole' });
     }
     for (const p of route.dhabas) if (p.s >= s0 && p.s < s1) {
-      addGeo(dhabaGeo(), p.s, 17, Math.PI);
-      route.pos(p.s + 14, 10, _p); cols.push({ x: _p.x, z: _p.z, r: 0.3, kind: 'pole' });
-      route.pos(p.s + 6, 22, _p); cols.push({ x: _p.x, z: _p.z, r: 4.5, kind: 'building' });
+      const ex = route.extraAt(p.s);
+      addGeo(dhabaGeo(), p.s, 17 + ex, Math.PI);
+      route.pos(p.s + 14, 10 + ex, _p); cols.push({ x: _p.x, z: _p.z, r: 0.3, kind: 'pole' });
+      route.pos(p.s + 6, 22 + ex, _p); cols.push({ x: _p.x, z: _p.z, r: 4.5, kind: 'building' });
     }
     // signals at junctions
     for (const j of route.junctions) if (j.s >= s0 && j.s < s1) {
@@ -322,21 +327,23 @@ export class World {
     }
     // border gates
     for (const b of route.borders) if (b.s >= s0 && b.s < s1) {
-      addGeo(gateGeo(17, '#e07a1f'), b.s, 0, Math.PI / 2);
-      for (const dd of [8.5, -8.5]) { route.pos(b.s, dd, _p); cols.push({ x: _p.x, z: _p.z, r: 0.9, kind: 'gate' }); }
-      this._signPlane(group, signTexture('gate', ['Welcome to ' + STATES[b.to].name, 'Drive slow • Pay toll'], 0), b.s - 0.75, 0, 9.0, 15, 2.0);
+      const ex = route.extraAt(b.s);
+      addGeo(gateGeo(17 + 2 * ex, '#e07a1f'), b.s, 0, Math.PI / 2);
+      for (const dd of [8.5 + ex, -8.5 - ex]) { route.pos(b.s, dd, _p); cols.push({ x: _p.x, z: _p.z, r: 0.9, kind: 'gate' }); }
+      this._signPlane(group, signTexture('gate', ['Welcome to ' + STATES[b.to].name, 'Drive slow • Pay toll'], 0), b.s - 0.75, 0, 9.0, 15 + ex, 2.0 + ex * 0.13);
     }
     // signs
     for (const sg of route.signs) if (sg.s >= s0 && sg.s < s1) {
       const tex = signTexture(sg.kind, sg.text, sg.dir);
+      const ex = route.extraAt(sg.s);
       if (sg.kind === 'turn') {
-        route.pos(sg.s, 6.5, _p);
+        route.pos(sg.s, 6.5 + ex, _p);
         ub.box(0.1, 2.4, 0.1, _p.x, _p.y + 1.2, _p.z, '#777');
         cols.push({ x: _p.x, z: _p.z, r: 0.2, kind: 'pole' });
-        this._signPlane(group, tex, sg.s, 6.5, 2.7, 1.5, 0.75, true);
+        this._signPlane(group, tex, sg.s, 6.5 + ex, 2.7, 1.5, 0.75, true);
       } else {
         const big = sg.kind !== 'stop';
-        const d = 8.2, W = big ? 5.2 : 3.4, H = W / 2;
+        const d = 8.2 + ex, W = big ? 5.2 : 3.4, H = W / 2;
         for (const o of [-W / 2 + 0.4, W / 2 - 0.4]) {
           route.pos(sg.s, d + o, _p);
           ub.box(0.15, 3.5 + H, 0.15, _p.x, _p.y + (3.5 + H) / 2, _p.z, '#888');

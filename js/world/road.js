@@ -4,7 +4,14 @@ import { VC_MAT, Builder } from '../util.js';
 import { STEP, ROAD_HALF } from './route.js';
 
 export const CHUNK = 75; // samples per chunk (150 m)
-const OFFS = [-420, -160, -70, -32, -16, -8.2, -5.6, -ROAD_HALF, ROAD_HALF, 5.6, 8.2, 16, 32, 70, 160, 420];
+// cross-section columns for sample i: they follow the road width (2 lanes in cities, 4 lanes divided elsewhere)
+function offsets(route, i) {
+  const e = route.edge[i], m = route.med[i], mi = Math.max(0, m - 0.12);
+  return [-420, -160, -70, -32, -16, -(e + 4.6), -(e + 2), -e, -m, -mi, mi, m, e, e + 2, e + 4.6, 16, 32, 70, 160, 420];
+}
+// band kinds between the columns above
+const BANDS = ['g', 'g', 'g', 'g', 'g', 'v', 's', 'a', 'k', 'm', 'k', 'a', 's', 'v', 'g', 'g', 'g', 'g', 'g'];
+const MEDIAN = new THREE.Color('#5f8f3c'), KERB = new THREE.Color('#b8b4aa');
 
 const C = (h) => new THREE.Color(h);
 const ASPHALT = C('#4b4d50'), ASPHALT2 = C('#55575a'), SIDEWALK = C('#a9a49a'), URBAN = C('#8c8576'),
@@ -38,28 +45,33 @@ export function buildRoadChunk(route, c) {
   const pt = (i, d) => {
     const v = new THREE.Vector3();
     const h = route.h[i];
-    const dd = Math.abs(d) > 9 ? clampD(i, d) : d;
+    const dd = Math.abs(d) > 13 ? clampD(i, d) : d;
     v.set(route.x[i] + Math.cos(h) * dd, route.y[i] + route.sideH(i, dd), route.z[i] - Math.sin(h) * dd);
     return v;
   };
 
   // cross-section columns for each sample
-  const cols = [];
-  for (let i = i0; i <= i1; i++) cols.push(OFFS.map((d) => pt(i, d)));
+  const cols = [], offs = [];
+  for (let i = i0; i <= i1; i++) { const o = offsets(route, i); offs.push(o); cols.push(o.map((d) => pt(i, d))); }
 
   for (let i = i0; i < i1; i++) {
     const r0 = cols[i - i0], r1 = cols[i - i0 + 1];
+    const O = offs[i - i0];
     const zone = route.zones[route.zi[i]];
     const th = route.themeAt(i * STEP);
     const city = zone.type === 'city', ind = zone.type === 'industrial';
     const hill = route.hillAmt[i] > 0.05, hs = route.hillSide[i];
-    for (let j = 0; j < OFFS.length - 1; j++) {
-      const d0 = OFFS[j], d1 = OFFS[j + 1];
+    for (let j = 0; j < O.length - 1; j++) {
+      const d0 = O[j], d1 = O[j + 1];
+      if (Math.abs(d1 - d0) < 1e-4) continue;
       const mid = (d0 + d1) / 2, ad = Math.abs(mid);
+      const kind = BANDS[j];
       let col;
-      if (ad < ROAD_HALF) col = ((i >> 2) % 3 === 0) ? ASPHALT2 : ASPHALT;
-      else if (ad < 5.6) col = tmp.set(city ? '#7a7670' : th.shoulder).clone();
-      else if (ad < 8.2 && city) col = SIDEWALK;
+      if (kind === 'a') col = ((i >> 2) % 3 === 0) ? ASPHALT2 : ASPHALT;
+      else if (kind === 'm') col = MEDIAN;
+      else if (kind === 'k') col = KERB;
+      else if (kind === 's') col = tmp.set(city ? '#7a7670' : th.shoulder).clone();
+      else if (kind === 'v' && city) col = SIDEWALK;
       else if (hill && Math.sign(mid) === hs) col = ad < 33 ? (j % 2 ? ROCK : ROCK2) : tmp.set(th.mountain).clone();
       else if (city) col = URBAN;
       else if (ind && ad < 70) col = INDUS;
@@ -80,11 +92,19 @@ export function buildRoadChunk(route, c) {
   };
   for (let i = i0; i < i1; i++) {
     const s = i * STEP;
-    const noPass = route.hillAmt[i] > 0.05 || Math.abs(route.k[i]) > 1 / 150;
-    if (noPass) { strip(i, -0.2, -0.08, YELLOW); strip(i, 0.08, 0.2, YELLOW); }
-    else if (Math.floor(s / 6) % 2 === 0) strip(i, -0.08, 0.08, WHITE);
-    strip(i, ROAD_HALF - 0.22, ROAD_HALF - 0.1, WHITE);
-    strip(i, -ROAD_HALF + 0.1, -ROAD_HALF + 0.22, WHITE);
+    const e = route.edge[i], m = route.med[i], w = route.wide[i];
+    if (w < 0.05) {
+      // 2-lane city street: centre line
+      const noPass = route.hillAmt[i] > 0.05 || Math.abs(route.k[i]) > 1 / 150;
+      if (noPass) { strip(i, -0.2, -0.08, YELLOW); strip(i, 0.08, 0.2, YELLOW); }
+      else if (Math.floor(s / 6) % 2 === 0) strip(i, -0.08, 0.08, WHITE);
+    } else {
+      // divided road: yellow lines along the median, dashed lane dividers
+      strip(i, m + 0.1, m + 0.22, YELLOW); strip(i, -m - 0.22, -m - 0.1, YELLOW);
+      if (w > 0.6 && Math.floor(s / 6) % 2 === 0) { strip(i, m + 3.42, m + 3.56, WHITE); strip(i, -m - 3.56, -m - 3.42, WHITE); }
+    }
+    strip(i, e - 0.22, e - 0.1, WHITE);
+    strip(i, -e + 0.1, -e + 0.22, WHITE);
   }
   // junctions: zebra crossings, stop lines and side roads
   for (const jn of route.junctions) {
@@ -125,7 +145,7 @@ export function buildRoadChunk(route, c) {
   const bb = new Builder();
   for (let i = i0; i < i1; i += 2) {
     if (route.hillAmt[i] < 0.6) continue;
-    const d = -route.hillSide[i] * 6.6;
+    const d = -route.hillSide[i] * (route.edge[i] + 3.0);
     const p = route.pos(i * STEP + 2, d);
     bb.box(0.1, 0.35, 4.05, p.x, p.y + 0.65, p.z, '#d9d9d9', 0, p.h, 0);
     bb.box(0.12, 0.08, 4.05, p.x, p.y + 0.86, p.z, '#c62828', 0, p.h, 0);

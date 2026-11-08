@@ -12,7 +12,8 @@ const MIX = {
   highway: [['car', 26], ['truck', 28], ['bus', 14], ['bike', 10], ['suv', 12], ['tractor', 5], ['auto', 5]],
   hills: [['truck', 30], ['car', 30], ['bus', 20], ['bike', 10], ['suv', 10]],
 };
-const TARGET = { city: 18, industrial: 11, highway: 11, hills: 7 };
+// fewer vehicles on the open 4-lane highways so they feel open
+const TARGET = { city: 18, industrial: 8, highway: 7, hills: 6 };
 
 const geoCache = {};
 function vehicleGeo(type, variant) {
@@ -51,12 +52,15 @@ export class Traffic {
     const variant = Math.floor(Math.random() * 9);
     const mesh = new THREE.Mesh(vehicleGeo(type, variant), VC_MAT);
     this.group.add(mesh);
-    const edge = type === 'bike' || type === 'auto' || type === 'tractor' ? 0.6 : 0;
-    const laneD = dir * (LANE / 2 + edge);
+    const edgeOff = type === 'bike' || type === 'auto' || type === 'tractor' ? 0.6 : 0;
+    const slow = ['truck', 'bus', 'tractor', 'auto', 'bike'].includes(type);
+    // on 4-lane roads cars sometimes cruise in the right (fast) lane
+    const lane = !slow && Math.random() < 0.3 ? 1 : 0;
     const zone = this.route.zoneAt(s).type;
+    const laneD = this._laneD({ s, dir, lane, edgeOff });
     const v0 = T.vmax * (zone === 'city' ? 0.55 : zone === 'hills' ? 0.6 : 1) * (0.8 + Math.random() * 0.3);
     const o = {
-      id: uid++, type, mesh, s, d: laneD, laneD, targetD: laneD, dir, v: v ?? v0 * 0.8, v0,
+      id: uid++, type, mesh, s, d: laneD, laneD, targetD: laneD, dir, lane, homeLane: lane, edgeOff, v: v ?? v0 * 0.8, v0,
       len: T.len, wid: T.wid, mass: T.mass, accel: T.accel, aggressive: Math.random() < 0.45,
       overtaking: false, overtakeT: 0, x: 0, z: 0, h: 0, wreck: null, honk: 0,
     };
@@ -65,11 +69,27 @@ export class Traffic {
     return o;
   }
 
+  // centre of the vehicle's lane at its position (2-lane streets: keep left; 4-lane: chosen lane)
+  _laneD(o) {
+    const r = this.route, i = r.idx(o.s);
+    if (r.wide[i] < 0.5) return o.dir * (LANE / 2 + o.edgeOff);
+    return r.laneD(o.s, o.dir, o.lane) + (o.lane === 0 ? o.dir * o.edgeOff * 0.5 : 0);
+  }
+  _laneClear(o, all, laneD, back, ahead) {
+    for (const b of all) {
+      if (b.id === o.id) continue;
+      if (Math.abs(b.d - laneD) > b.hw + o.wid / 2 + 0.3) continue;
+      const rel = ((b.s0 + b.s1) / 2 - o.s) * o.dir;
+      if (rel > -back && rel < ahead) return false;
+    }
+    return true;
+  }
+
   // fill the road around s with traffic (start of a trip / after a teleport)
   populate(sP) {
     const route = this.route;
     const zone = route.zoneAt(sP).type;
-    const n = Math.round((TARGET[zone] || 10) * this.density * 0.8);
+    const n = Math.round((TARGET[zone] || 10) * this.density * (zone === 'city' ? 0.8 : 0.6));
     for (let k = 0; k < n * 3 && this.list.length < n; k++) {
       const dir = Math.random() < 0.5 ? 1 : -1;
       const s = sP + (dir > 0 ? 40 + Math.random() * 360 : 60 + Math.random() * 380);
@@ -108,7 +128,7 @@ export class Traffic {
     this.spawnT -= dt;
     const target = Math.round((TARGET[zone] || 10) * this.density);
     if (this.spawnT <= 0 && this.list.length < target) {
-      this.spawnT = 0.35;
+      this.spawnT = zone === 'city' ? 0.35 : 0.9;
       const dir = Math.random() < 0.5 ? 1 : -1;
       let s = dir > 0 ? (Math.random() < 0.8 ? sP + 170 + Math.random() * 230 : sP - 130 - Math.random() * 60) : sP + 260 + Math.random() * 200;
       if (s > 60 && s < route.bayS - 150) {
@@ -167,11 +187,36 @@ export class Traffic {
       o.v = Math.max(0, o.v + acc * dt);
       o.s += o.dir * o.v * dt;
 
-      // overtaking decision
-      if (!o.overtaking && o.aggressive && leader && (leader.ref || leader.id === -1) && gap < 42 && leader.v * o.dir < o.v0 - 2.5 && o.type !== 'bus') {
+      // lane keeping (lanes follow the road width)
+      const wideHere = route.wide[route.idx(o.s)] > 0.5;
+      const wideAhead = route.wide[route.idx(o.s + o.dir * 70)] > 0.95;
+      if (o.lane === 1 && !wideAhead && !o.overtaking) o.lane = 0;            // merge left before the road narrows
+      o.laneD = this._laneD(o);
+      const multi = wideHere && wideAhead;
+      // overtaking on 4-lane roads: use the right lane of our own side
+      if (multi && !o.overtaking && o.lane === 0 && leader && (leader.ref || leader.id === -1) && gap < 40 && leader.v * o.dir < o.v0 - 2 && (o.aggressive || o.type === 'car' || o.type === 'suv')) {
+        const d1 = route.laneD(o.s, o.dir, 1);
+        if (this._laneClear(o, all, d1, 25, 40)) { o.overtaking = 'lane'; o.lane = 1; o.overtakeT = 0; o.passing = leader.id; o.laneD = this._laneD(o); }
+      }
+      if (o.overtaking === 'lane') {
+        o.overtakeT += dt;
+        const tg = all.filter((b) => b.id === o.passing);
+        let passed = !tg.length;
+        if (tg.length) {
+          if (o.dir > 0) passed = o.s - o.len / 2 > Math.max(...tg.map((b) => b.s1)) + 8;
+          else passed = o.s + o.len / 2 < Math.min(...tg.map((b) => b.s0)) - 8;
+        }
+        const d0 = route.laneD(o.s, o.dir, 0);
+        if ((passed && this._laneClear(o, all, d0, 12, 25)) || o.overtakeT > 20 || !wideAhead) {
+          o.overtaking = false; o.lane = o.homeLane; if (!wideAhead) o.lane = 0; o.laneD = this._laneD(o);
+        }
+      }
+      o.targetD = o.overtaking === true ? -o.laneD : o.laneD;
+      // overtaking on 2-lane roads: use the oncoming lane when it is clear
+      if (!multi && !wideHere && !o.overtaking && o.aggressive && leader && (leader.ref || leader.id === -1) && gap < 42 && leader.v * o.dir < o.v0 - 2.5 && o.type !== 'bus') {
         if (this._canOvertake(o, all, route)) { o.overtaking = true; o.targetD = -o.laneD; o.overtakeT = 0; o.passing = leader.id; }
       }
-      if (o.overtaking) {
+      if (o.overtaking === true) {
         o.overtakeT += dt;
         const tg = all.filter((b) => b.id === o.passing);
         let passed = !tg.length;
@@ -201,7 +246,7 @@ export class Traffic {
     for (const j of route.junctions) if ((j.s - o.s) * o.dir > -10 && (j.s - o.s) * o.dir < 150) return false;
     for (let k = 0; k < 150; k += 10) {
       const i = route.idx(o.s + o.dir * k);
-      if (Math.abs(route.k[i]) > 1 / 250 || route.hillAmt[i] > 0.1) return false;
+      if (Math.abs(route.k[i]) > 1 / 250 || route.hillAmt[i] > 0.1 || route.wide[i] > 0.05) return false;
     }
     for (const b of all) {
       if (b.id === o.id) continue;
