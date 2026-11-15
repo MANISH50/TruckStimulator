@@ -1,6 +1,7 @@
 // App shell: screens (menu, truck, cargo, route, summary), renderer, main loop.
 import * as THREE from 'three';
 import { TRUCKS, truckById, dialMax } from './data/trucks.js';
+import { CARS, carById, NO_CARGO } from './data/cars.js';
 import { CARGO, cargoById, canCarry } from './data/cargo.js';
 import { STATES, CITIES, cityById } from './data/cities.js';
 import { tripInfo } from './world/route.js';
@@ -18,17 +19,22 @@ const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
 
 const QUALITY = [
-  { pr: 1.5, ahead: 560, fog: 360, traffic: 1 },
-  { pr: 1.15, ahead: 450, fog: 300, traffic: 0.85 },
-  { pr: 0.85, ahead: 360, fog: 240, traffic: 0.7 },
+  { pr: 1.5, ahead: 600, fog: 520, traffic: 1, shadow: 2048 },
+  { pr: 1.15, ahead: 520, fog: 440, traffic: 0.85, shadow: 1024 },
+  { pr: 0.85, ahead: 420, fog: 340, traffic: 0.7, shadow: 0 },
 ];
 
 class App {
   constructor() {
     this.canvas = $('c');
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
-    this.qi = 0;
-    this.quality = QUALITY[0];
+    // filmic tone mapping for natural, bright colours; soft shadows from the sun
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.1;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.qi = params.has('q') ? Math.max(0, Math.min(QUALITY.length - 1, Number(params.get('q')))) : 0;
+    this.quality = QUALITY[this.qi];
     this._applyQuality();
     this.controls = new Controls();
     this.audio = new Audio();
@@ -38,15 +44,19 @@ class App {
     this.screen = 'menu';
     this.lastView = 'back';
     this.overtakeNag = 0;
+    let pr = {};
+    try { pr = JSON.parse(localStorage.getItem('its_prefs') || '{}'); } catch (e) { /* */ }
+    this.laneAssist = pr.laneAssist ?? true;
+    this.radioOn = pr.radio ?? true;
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem('its_sel') || '{}'); } catch (e) { /* */ }
-    this.sel = Object.assign({ truck: 'cargo', cargo: 'goods', from: 'delhi', to: 'jaipur', governor: true, tod: 'day' }, saved);
+    this.sel = Object.assign({ truck: 'cargo', cargo: 'goods', from: 'delhi', to: 'jaipur', governor: true, tod: 'day', mode: 'truck', carId: 'sedan' }, saved);
     this._wire();
     this._resize();
     addEventListener('resize', () => this._resize());
     addEventListener('orientationchange', () => setTimeout(() => this._resize(), 200));
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.pause(); });
-    this.showroom.setTruck(truckById(this.sel.truck), cargoById(this.sel.cargo));
+    this._showVehicle();
     this.fpsAcc = 0; this.fpsN = 0; this.lowFps = 0; this.hudT = 0; this.mapT = 0;
     this.last = performance.now();
     this.renderer.setAnimationLoop(() => this._frame());
@@ -55,6 +65,7 @@ class App {
       this.sel.from = params.get('from') || 'delhi'; this.sel.to = params.get('to') || 'agra';
       if (params.get('truck')) this.sel.truck = params.get('truck');
       if (params.get('cargo')) this.sel.cargo = params.get('cargo');
+      if (params.get('car')) { this.sel.mode = 'car'; this.sel.carId = params.get('car'); } else this.sel.mode = 'truck';
       this.startTrip();
     }
   }
@@ -63,7 +74,9 @@ class App {
     const pr = Math.min(window.devicePixelRatio || 1, this.quality.pr);
     this.renderer.setPixelRatio(pr);
     if (this.game) {
-      this.game.scene.fog.far = this.quality.fog;
+      this.game.scene.fog.far = this.quality.fog * this.game.tod.fog;
+      this.game.sun.castShadow = this.quality.shadow > 0;
+      if (this.quality.shadow > 0 && this.game.sun.shadow.map) { this.game.sun.shadow.map.dispose(); this.game.sun.shadow.map = null; this.game.sun.shadow.mapSize.set(this.quality.shadow, this.quality.shadow); }
       this.game.world.setDrawDistance(this.quality.ahead);
       this.game.traffic.density = this.quality.traffic;
     }
@@ -88,10 +101,16 @@ class App {
     if (id === 'summary') this._summaryUI();
     if (id === 'menu' || id === 'garage' || id === 'cargo' || id === 'route' || id === 'summary') {
       if (this.game) { this.game.dispose(); this.game = null; }
+      this.audio.setRadio(false);
       this.hud(false);
     }
   }
   hud(on) { $('hud').classList.toggle('hidden', !on); }
+  _prefs() {
+    try { localStorage.setItem('its_prefs', JSON.stringify({ laneAssist: this.laneAssist, radio: this.radioOn })); } catch (e) { /* */ }
+    $('bAssist').classList.toggle('on', this.laneAssist);
+    $('bRadio').classList.toggle('on', this.radioOn);
+  }
   save() { try { localStorage.setItem('its_sel', JSON.stringify(this.sel)); } catch (e) { /* */ } }
 
   _wire() {
@@ -100,13 +119,23 @@ class App {
     tap('bPlay', async () => {
       await this.audio.init();
       this._landscape();
+      this.sel.mode = 'truck'; this.save();
+      this._showVehicle();
       this.showScreen('garage');
     });
+    tap('bDrive', async () => {
+      await this.audio.init();
+      this._landscape();
+      this.sel.mode = 'car'; this.save();
+      this._showVehicle();
+      this.showScreen('garage');
+    });
+    tap('rBack', () => this.showScreen(this.car ? 'garage' : 'cargo'));
     // garage
     tap('gPrev', () => this._cycleTruck(-1));
     tap('gNext', () => this._cycleTruck(1));
     $('tGov').addEventListener('change', (e) => { this.sel.governor = e.target.checked; this._garageUI(); this.save(); });
-    tap('gGo', () => this.showScreen('cargo'));
+    tap('gGo', () => this.showScreen(this.car ? 'route' : 'cargo'));
     tap('cGo', () => this.showScreen('route'));
     // route
     this.map = new RouteMap($('map'), (f, t) => { this.sel.from = f; this.sel.to = t; this._routeInfo(); });
@@ -128,6 +157,9 @@ class App {
     tap('bCam', () => this._camera());
     tap('bMute', () => this._mute());
     tap('bLights', () => this.game && this.game.toggleLights());
+    tap('bCruise', () => this.game && this.game.toggleCruise());
+    tap('bAssist', () => { this.laneAssist = !this.laneAssist; this._prefs(); this.game && this.game.msg(this.laneAssist ? '🛣 Lane assist ON — let go of the wheel and the truck follows the lane' : 'Lane assist OFF', 2.5); });
+    tap('bRadio', () => { this.radioOn = !this.radioOn; this._prefs(); this.audio.setRadio(this.radioOn && this.screen === 'game'); });
     for (const b of document.querySelectorAll('.tod')) b.addEventListener('click', () => { this.sel.tod = b.dataset.tod; this.save(); this._todUI(); this.audio.click(); });
     this._fuelTicks();
     $('ctxBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); this.game && this.game.useContext(); });
@@ -147,8 +179,10 @@ class App {
       if (e.code === 'KeyM') this._mute();
       if (e.code === 'KeyE' && this.game) this.game.useContext();
       if (e.code === 'KeyL' && this.game) this.game.toggleLights();
+      if (e.code === 'KeyK' && this.game) this.game.toggleCruise();
     });
     this._updateMuteIcon();
+    this._prefs();
   }
 
   async _landscape() {
@@ -159,7 +193,16 @@ class App {
     } catch (e) { /* not supported (e.g. iPhone): the rotate overlay handles portrait */ }
   }
 
+  get car() { return this.sel.mode === 'car'; }
+  get vehicle() { return this.car ? carById(this.sel.carId) : truckById(this.sel.truck); }
+  _showVehicle() { this.showroom.setTruck(this.vehicle, this.car ? NO_CARGO : cargoById(this.sel.cargo)); }
   _cycleTruck(d) {
+    if (this.car) {
+      const i = CARS.findIndex((c) => c.id === this.sel.carId);
+      this.sel.carId = CARS[(i + d + CARS.length) % CARS.length].id;
+      this._showVehicle(); this._garageUI(); this.save();
+      return;
+    }
     const i = TRUCKS.findIndex((t) => t.id === this.sel.truck);
     const t = TRUCKS[(i + d + TRUCKS.length) % TRUCKS.length];
     this.sel.truck = t.id;
@@ -170,11 +213,17 @@ class App {
     this.save();
   }
   _garageUI() {
-    const t = truckById(this.sel.truck);
+    const t = this.vehicle;
+    $('gTitle').textContent = this.car ? 'Choose your car' : 'Choose your truck';
+    $('gTag').textContent = this.car ? 'All cars unlocked' : 'All trucks unlocked';
+    $('gGo').textContent = this.car ? 'Choose route ›' : 'Choose cargo ›';
+    $('tGov').closest('label').style.display = this.car ? 'none' : '';
     $('tName').textContent = t.name;
     $('tDesc').textContent = t.desc;
     const bars = (n) => '<i>' + [1, 2, 3, 4, 5].map((k) => `<u class="${k <= n ? 'on' : ''}"></u>`).join('') + '</i>';
-    $('tStats').innerHTML = `<span>Top speed ${this.sel.governor ? Math.min(80, t.vmax) : t.vmax - 5} km/h</span>${bars(t.stats.speed)}<span>Pickup</span>${bars(t.stats.pickup)}<span>Size</span>${bars(t.stats.size)}<span>Handling difficulty</span>${bars(t.stats.handling)}`;
+    const top = t.car ? t.vmax : this.sel.governor ? Math.min(80, t.vmax) : t.vmax - 5;
+    $('tStats').innerHTML = `<span>Top speed ${top} km/h</span>${bars(t.stats.speed)}<span>Pickup</span>${bars(t.stats.pickup)}<span>Size</span>${bars(t.stats.size)}<span>${t.car ? 'Comfort' : 'Handling difficulty'}</span>${bars(t.car ? 6 - t.stats.handling : t.stats.handling)}`;
+    if (t.car) return;
     $('tGov').checked = this.sel.governor;
     $('tGovTxt').textContent = this.sel.governor ? 'ON (80 km/h legal limit)' : 'OFF (' + (t.vmax - 5) + ' km/h)';
   }
@@ -203,7 +252,7 @@ class App {
     $('rStep').textContent = !f ? 'Tap a FROM city' : !t ? 'Now tap a TO city' : 'Route ready!';
     $('rGo').disabled = !(f && t);
     if (f && t) {
-      const info = tripInfo(f, t);
+      const info = tripInfo(f, t, this.sel.mode);
       $('rInfo').innerHTML = `Road distance <b>${info.realKm} km</b><br>Drive time in game <b>~${Math.round(info.estSec / 60)} min</b><br>States: <b>${info.states.map((s) => STATES[s].name).join(' → ')}</b>`;
       this.save();
     } else $('rInfo').innerHTML = 'Tap cities on the map. 14 cities in 11 states.';
@@ -211,12 +260,12 @@ class App {
   _todUI() { for (const b of document.querySelectorAll('.tod')) b.classList.toggle('on', b.dataset.tod === this.sel.tod); }
   _summaryUI() {
     this._todUI();
-    const info = tripInfo(this.sel.from, this.sel.to);
-    const t = truckById(this.sel.truck), c = cargoById(this.sel.cargo);
+    const info = tripInfo(this.sel.from, this.sel.to, this.sel.mode);
+    const t = this.vehicle, c = this.car ? NO_CARGO : cargoById(this.sel.cargo);
     $('sumBody').innerHTML = `<div class="kv">
       <div><small>From</small><b>${info.from.name}</b></div><div><small>To</small><b>${info.to.name}</b></div>
       <div><small>Distance</small><b>${info.realKm} km</b></div><div><small>Estimated time</small><b>${Math.round(info.estSec / 60)} min</b></div>
-      <div><small>Truck</small><b>${t.name}</b></div><div><small>Cargo</small><b>${c.icon} ${c.name}</b></div>
+      <div><small>${this.car ? 'Car' : 'Truck'}</small><b>${t.name}</b></div><div><small>${this.car ? 'Trip' : 'Cargo'}</small><b>${this.car ? '🛣 Long drive' : c.icon + ' ' + c.name}</b></div>
     </div><p class="hint">Route: ${info.states.map((s) => STATES[s].name).join(' → ')} • Game road ${(info.gameM / 1000).toFixed(1)} km<br>⛽ Refuel at diesel pumps • 🍲 Rest at dhabas • 🚦 Stop at red lights • Keep LEFT</p>`;
   }
 
@@ -253,19 +302,21 @@ class App {
   startTrip() {
     this.audio.init();
     if (this.game) { this.game.dispose(); this.game = null; }
-    const spec = truckById(this.sel.truck);
-    let cargo = cargoById(this.sel.cargo);
-    if (!canCarry(spec, cargo)) cargo = cargoById('goods');
+    const spec = this.vehicle;
+    let cargo = this.car ? NO_CARGO : cargoById(this.sel.cargo);
+    if (!this.car && !canCarry(spec, cargo)) cargo = cargoById('goods');
     for (const s of document.querySelectorAll('.screen')) s.classList.add('hidden');
     this.screen = 'game';
     $('loading').classList.remove('hidden');
     $('loadTxt').textContent = 'Building the road…';
     // let the loading text paint first
     setTimeout(() => {
-      this.game = new Game(this, { spec, cargo, from: this.sel.from, to: this.sel.to, governor: this.sel.governor, tod: this.sel.tod });
+      this.game = new Game(this, { spec, cargo, from: this.sel.from, to: this.sel.to, governor: this.car ? false : this.sel.governor, tod: this.sel.tod, mode: this.sel.mode || 'truck' });
+      document.body.classList.toggle('carmode', this.car);
       this._speedoUI(spec, this.game.truck.limitKmh);
       this.game.camera.aspect = this.w / this.h; this.game.camera.updateProjectionMatrix();
-      this.audio.setupEngine(spec.cyl, spec.id === 'mini' ? 0.7 : spec.id === 'turbo' ? 1.25 : 1);
+      this.audio.setupEngine(spec.cyl, spec.car ? 0.55 : spec.id === 'mini' ? 0.7 : spec.id === 'turbo' ? 1.25 : 1);
+      this.audio.setRadio(this.radioOn);
       this._camName();
       if (DEBUG) window.__game = this.game;
     }, 30);
@@ -305,12 +356,14 @@ class App {
   // ---------- main loop ----------
   _frame() {
     const now = performance.now();
-    const dtReal = Math.min(0.05, (now - this.last) / 1000);
+    const rawDt = (now - this.last) / 1000;
+    const dtReal = Math.min(0.05, rawDt);
     this.last = now;
     const g = this.game;
     if (g) {
       g.update(dtReal);
       g.updateLights();
+      g.frame();
       this.renderer.render(g.scene, g.camera);
       if (g.state === 'drive') {
         // speedometer needle follows the speed smoothly as you accelerate / brake
@@ -326,10 +379,11 @@ class App {
         if (this.mapT <= 0) { this.mapT = 1 / 15; this.minimap.draw(g.route, g.truck, g.traffic, g.s); }
       }
     } else {
+      this.renderer.toneMappingExposure = 1.1;
       this.showroom.render(this.renderer, dtReal, this.w, this.h);
     }
     // FPS + adaptive quality
-    this.fpsAcc += dtReal; this.fpsN++;
+    this.fpsAcc += Math.min(rawDt, 0.5); this.fpsN++; // real frame time for the FPS meter / auto quality
     if (this.fpsAcc > 2) {
       const fps = this.fpsN / this.fpsAcc;
       this.fps = fps;
@@ -361,6 +415,9 @@ class App {
     $('dDist').textContent = d.left.toFixed(1);
     $('dArrow').style.transform = `rotate(${(-d.ang * 180 / Math.PI).toFixed(0)}deg)`;
     $('dNext').textContent = d.next;
+    const cv = this.game.cruiseText();
+    $('cruiseVal').textContent = cv ? cv : 'OFF';
+    $('bAssist').classList.toggle('active', !!this.game.assistActive);
   }
 }
 

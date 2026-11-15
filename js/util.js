@@ -52,7 +52,7 @@ function baseGeo(key, make) {
 }
 
 export class Builder {
-  constructor() { this.pos = []; this.nor = []; this.col = []; }
+  constructor(opt = {}) { this.pos = []; this.nor = []; this.col = []; this.detail = opt.detail || 0; }
   _add(geo, color, x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
     const CA = color == null ? geo.attributes.color : null;
     if (!CA) _c.set(color);
@@ -89,7 +89,7 @@ export class Builder {
     this.cyl(r * 0.5, r * 0.5, w * 1.04, 8, x, y, z, hub, 0, 0, Math.PI / 2);
     return this;
   }
-  sphere(r, x, y, z, color, sx = 1, sy = 1, sz = 1, detail = 0) {
+  sphere(r, x, y, z, color, sx = 1, sy = 1, sz = 1, detail = this.detail) {
     const g = baseGeo('ico' + detail, () => new THREE.IcosahedronGeometry(1, detail));
     return this._add(g, color, x, y, z, 0, 0, 0, r * sx, r * sy, r * sz);
   }

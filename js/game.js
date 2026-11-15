@@ -10,16 +10,27 @@ import { Traffic } from './sim/traffic.js';
 import { boxBox, circleBox, boxCorners } from './sim/collision.js';
 import { Effects, Debris, Recorder, dentMesh, drawCracks } from './sim/crash.js';
 import { CameraRig, VIEW_NAMES } from './cameras.js';
+import { Sky } from './world/sky.js';
 import { STATES } from './data/cities.js';
 
 const $ = (id) => document.getElementById(id);
 const tmpP = {};
 
 const TOD = {
-  day: { name: 'day', mix: 0, mixCol: '#ffffff', hemi: 1.25, hemiSky: '#fff6e0', hemiGround: '#5a6040', sun: 2.0, sunColor: '#fff3d6', sunY: 120, fog: 1, glow: 0, beam: 0.28 },
-  evening: { name: 'evening', mix: 0.55, mixCol: '#e8875a', hemi: 0.85, hemiSky: '#ffd0a8', hemiGround: '#4a3a30', sun: 1.1, sunColor: '#ffa060', sunY: 25, fog: 0.85, glow: 0.7, beam: 0.6 },
-  night: { name: 'night', mix: 0.88, mixCol: '#0a1430', hemi: 0.42, hemiSky: '#8090c0', hemiGround: '#151520', sun: 0.35, sunColor: '#a8b8ff', sunY: 90, fog: 0.7, glow: 1, beam: 0.95 },
+  // bright, natural light; night is moonlit blue rather than black
+  day: { name: 'day', hemi: 1.6, hemiSky: '#e4efff', hemiGround: '#7d7458', sun: 2.9, sunColor: '#fff1dc', exposure: 1.05, fog: 1.15, haze: 0.35, glow: 0, beam: 0.28 },
+  evening: { name: 'evening', hemi: 1.3, hemiSky: '#ffd9bd', hemiGround: '#5c4c3e', sun: 2.0, sunColor: '#ffb27a', exposure: 1.15, fog: 1.0, haze: 0.2, glow: 0.7, beam: 0.65 },
+  night: { name: 'night', hemi: 1.25, hemiSky: '#a6bbef', hemiGround: '#3a4055', sun: 1.0, sunColor: '#bccbff', exposure: 1.5, fog: 0.95, haze: 0.08, glow: 1, beam: 1 },
 };
+
+// the player's vehicle casts shadows (not its glows, beam or cab interior)
+function shadowModel(m) {
+  const set = (o) => o.traverse((c) => { if (c.isMesh && !c.material.transparent && c.material.blending !== THREE.AdditiveBlending) { c.castShadow = true; c.receiveShadow = true; } });
+  set(m.root);
+  if (m.trailer) set(m.trailer.group);
+  m.interior.traverse((c) => { c.castShadow = false; });
+  if (m.lights) m.lights.beam.castShadow = false;
+}
 
 function makeLightPoints(scene, n, size, color = '#fff4cc') {
   const g = new THREE.BufferGeometry();
@@ -39,17 +50,25 @@ export class Game {
     this.sel = sel;
     const { spec, cargo } = sel;
     this.spec = spec; this.cargo = cargo;
-    this.route = new Route(sel.from, sel.to);
+    this.mode = sel.mode || 'truck';
+    this.isCar = this.mode === 'car';
+    this.route = new Route(sel.from, sel.to, this.mode);
     this.scene = new THREE.Scene();
     // time of day: day / evening / night
     this.tod = TOD[sel.tod] || TOD.day;
-    const sky = this.skyFor(0);
-    this.scene.background = sky.clone();
-    this.scene.fog = new THREE.Fog(sky.clone(), 120 * this.tod.fog, app.quality.fog * this.tod.fog);
+    this.sky = new Sky(this.scene, this.tod.name);
+    this.haze = new THREE.Color(this.route.themeAt(0).sky);
+    this.sky.setHaze(this.haze, this.tod.haze);
+    this.scene.fog = new THREE.Fog(this.sky.horizon.clone(), 160 * this.tod.fog, app.quality.fog * this.tod.fog);
     this.hemi = new THREE.HemisphereLight(this.tod.hemiSky, this.tod.hemiGround, this.tod.hemi);
     this.sun = new THREE.DirectionalLight(this.tod.sunColor, this.tod.sun);
-    this.sun.position.set(-60, this.tod.sunY, 40);
-    this.scene.add(this.hemi, this.sun);
+    this.sun.castShadow = app.quality.shadow > 0;
+    this.sun.shadow.mapSize.set(app.quality.shadow || 512, app.quality.shadow || 512);
+    const sc = this.sun.shadow.camera;
+    sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 10; sc.far = 320;
+    this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.04;
+    this.scene.add(this.hemi, this.sun, this.sun.target);
+    app.renderer.toneMappingExposure = this.tod.exposure;
     // lights of other vehicles and street lamps (only drawn in the evening / at night)
     this.aiLights = makeLightPoints(this.scene, 200, 0.75 * this.tod.glow);
     this.aiTail = makeLightPoints(this.scene, 200, 0.55 * this.tod.glow, '#ff2a1a');
@@ -59,6 +78,7 @@ export class Game {
     if (app.lastView) this.rig.view = app.lastView;
 
     this.model = buildPlayerTruck(spec, cargo);
+    shadowModel(this.model);
     this.scene.add(this.model.root);
     if (this.model.trailer) this.scene.add(this.model.trailer.group);
     this.truck = new Truck(spec, cargo, sel.governor);
@@ -80,7 +100,7 @@ export class Game {
 
   reset() {
     const r = this.route;
-    const s = r.startS, d = 1.75;
+    const s = r.startS, d = r.laneD(r.startS, 1, 0);
     const p = r.pos(s, d, {});
     this.truck.reset(p.x, p.z, p.h);
     this.hint = r.idx(s);
@@ -90,6 +110,8 @@ export class Game {
     this.redLights = 0; this.offroadT = 0; this.bumps = 0;
     this.state = 'intro'; this.introT = 0;
     this.parkT = 0; this.ctx = null; this.busy = false;
+    this.cruise = 0; this.wheelFreeT = 0;
+    $('bCruise').classList.remove('on');
     this.crash = null; this.over = null;
     this.msgT = 0; this.lastMsg = '';
     this.borderIdx = 0; this.zoneIdx = -1;
@@ -103,6 +125,7 @@ export class Game {
     if (this.dented) {
       this.scene.remove(this.model.root); if (this.model.trailer) this.scene.remove(this.model.trailer.group);
       this.model = buildPlayerTruck(this.spec, this.cargo);
+      shadowModel(this.model);
       this.scene.add(this.model.root); if (this.model.trailer) this.scene.add(this.model.trailer.group);
       this.dented = false;
     }
@@ -127,6 +150,7 @@ export class Game {
   }
 
   dispose() {
+    this.sky.dispose();
     for (const p of [this.aiLights, this.aiTail, this.lampLights]) { this.scene.remove(p); p.geometry.dispose(); }
     this.world.dispose(); this.traffic.dispose(); this.fx.dispose(); this.debris.dispose();
     this.scene.traverse((o) => { if (o.geometry && o.userData.ownGeo) o.geometry.dispose(); });
@@ -160,7 +184,8 @@ export class Game {
     const grade = (r.y[i + 1] - r.y[i]) / STEP;
     const align = Math.cos(wrapAngle(t.heading - r.h[i]));
     t.offroad = Math.abs(this.d) > r.edge[i] + 2.4 && !this._onPaved();
-    t.update(dt, { steer: c.steer, throttle: c.throttle, brake: c.brake, gear: c.gear }, { slope: Math.atan(grade * align) });
+    const drv = this._assist(dt, c);
+    t.update(dt, { steer: drv.steer, throttle: drv.throttle, brake: drv.brake, gear: c.gear }, { slope: Math.atan(grade * align) });
     if (t.shiftEvent) { if (t.shiftEvent > 0 && t.throttle > 0.4) app.audio.blowoff(); t.shiftEvent = 0; }
 
     const p = r.project(t.x, t.z, this.hint, tmpP);
@@ -281,9 +306,9 @@ export class Game {
         if (txt) this.msg(txt, 3);
       }
       this.zoneIdx = zi;
-      this.skyTarget = this.skyFor(this.s);
+      this.hazeTarget = new THREE.Color(r.themeAt(this.s).sky);
     }
-    if (this.skyTarget) { this.scene.background.lerp(this.skyTarget, Math.min(1, dt * 0.5)); this.scene.fog.color.copy(this.scene.background); }
+    if (this.hazeTarget) { this.haze.lerp(this.hazeTarget, Math.min(1, dt * 0.5)); this.sky.setHaze(this.haze, this.tod.haze); this.scene.fog.color.copy(this.sky.horizon); }
     // red lights
     for (const j of r.junctions) {
       const stop = j.s - 9;
@@ -527,6 +552,7 @@ export class Game {
   }
 
   _spill(intensity, vx, vz) {
+    if (this.cargo.id === 'none') return;
     const m = this.model, db = this.debris, cg = this.cargo;
     const holder = m.trailer ? m.trailer : null;
     const src = holder ? holder.group : m.root;
@@ -670,7 +696,30 @@ export class Game {
     const t = this.truck;
     const km = (t.odometer / 1000).toFixed(1);
     const fuelUsed = (this.fuelUsedTotal || 0);
-    if (kind === 'win') {
+    if (kind === 'win' && this.isCar) {
+      // Long Drive: relaxed scoring - smooth driving, safety and parking
+      const smooth = clamp(this.cargoCond / 100, 0, 1);
+      const safe = clamp(1 - this.redLights * 0.2 - this.offroadT / 40 - this.darkNoLightsT / 60, 0, 1);
+      const park = this.parkAcc ?? 0.5;
+      const stars = clamp(Math.round((smooth + safe + park) / 3 * 3), 1, 3);
+      const avg = this.tripT > 0 ? t.odometer / this.tripT * 3.6 : 0;
+      $('winTitle').textContent = 'DRIVE COMPLETE';
+      $('stars').innerHTML = [1, 2, 3].map((i) => `<span class="${i <= stars ? '' : 'off'}">⭐</span>`).join('');
+      $('winBody').innerHTML = `<p class="reason">🚗 Welcome to ${this.route.to.name}! What a drive.</p>
+        <div class="kv">
+          <div><small>Time</small><b>${fmtTime(this.tripT)}</b></div>
+          <div><small>Distance</small><b>${km} km</b></div>
+          <div><small>Average speed</small><b>${Math.round(avg)} km/h</b></div>
+          <div><small>Fuel used</small><b>${Math.round(this._fuelL() / 3)} L</b></div>
+          <div><small>Smooth driving</small><b>${'★'.repeat(Math.max(1, Math.round(smooth * 3)))}</b></div>
+          <div><small>Safe driving</small><b>${'★'.repeat(Math.max(0, Math.round(safe * 3)))}</b></div>
+          <div><small>Parking</small><b>${'★'.repeat(Math.max(0, Math.round(park * 3)))}</b></div>
+        </div><p class="hint">States crossed: ${this.route.states.map((s) => STATES[s].name).join(' → ')}</p>`;
+      app.audio.chime(true);
+      setTimeout(() => app.audio.chime(true), 400);
+      app.showScreen('win');
+    } else if (kind === 'win') {
+      $('winTitle').textContent = 'DELIVERY COMPLETE';
       const est = this.route.estSec;
       const timeScore = this.tripT <= est ? 1 : this.tripT <= est * 1.35 ? 0.7 : 0.4;
       const safe = clamp(1 - this.redLights * 0.2 - this.offroadT / 40 - (100 - this.cargoCond) / 200 - this.darkNoLightsT / 60, 0, 1);
@@ -698,7 +747,7 @@ export class Game {
       const reasons = { crash: '💥 Accident! ' + this.crashWhat, fuel: '⛽ Out of diesel! The truck stopped on the road.' };
       $('overReason').textContent = reasons[kind];
       const cs = this.crashStats;
-      $('overCard').innerHTML = (kind === 'crash' ? `<div class="crashcard">Impact ${cs.kmh} km/h • ${cs.tons} t • Cargo lost ${cs.cargoLost}%</div>` : '') +
+      $('overCard').innerHTML = (kind === 'crash' ? `<div class="crashcard">Impact ${cs.kmh} km/h • ${cs.tons} t${this.isCar ? '' : ' • Cargo lost ' + cs.cargoLost + '%'}</div>` : '') +
         `<div class="kv"><div><small>Time</small><b>${fmtTime(this.tripT)}</b></div><div><small>Distance driven</small><b>${km} km</b></div><div><small>Left to go</small><b>${Math.max(0, (this.route.bayS - this.s) / 1000).toFixed(1)} km</b></div></div>`;
       app.showScreen('over');
     }
@@ -721,14 +770,14 @@ export class Game {
     this.camera.lookAt(t.x + Math.sin(t.heading) * mid, t.y + 1.8, t.z + Math.cos(t.heading) * mid);
     if (this.camera.fov !== 55) { this.camera.fov = 55; this.camera.updateProjectionMatrix(); }
     this.world.updateSignals(0);
-    $('loadTxt').textContent = T < 1.6 ? 'Loading ' + this.cargo.name.toLowerCase() + '…' : 'Loaded! Get ready…';
+    $('loadTxt').textContent = this.isCar ? (T < 1.6 ? 'Starting your long drive…' : 'Fasten your seat belt…') : T < 1.6 ? 'Loading ' + this.cargo.name.toLowerCase() + '…' : 'Loaded! Get ready…';
     if (T > 2.6) {
       cg.position.y = 0;
       this.state = 'drive';
       this.app.controls.enabled = true;
       $('loading').classList.add('hidden');
       this.app.hud(true);
-      this.msg('🚚 ' + this.route.from.name + ' → ' + this.route.to.name + ' • Keep LEFT!', 3.5);
+      this.msg((this.isCar ? '🚗 ' : '🚚 ') + this.route.from.name + ' → ' + this.route.to.name + ' • Keep LEFT!', 3.5);
       this.rig.inited = false;
       this.app.audio.airBrake();
     }
@@ -758,9 +807,10 @@ export class Game {
   _audio(dt) {
     const t = this.truck, a = this.app.audio;
     const zone = this.route.zoneAt(this.s).type;
+    a.nature(dt, zone === 'highway' || zone === 'hills' ? (this.tod.name === 'night' ? 'crickets' : 'birds') : null);
     const loadF = clamp(t.throttle * (0.5 + 0.5 * t.boost) + Math.max(0, Math.sin(Math.atan((this.route.y[this.route.idx(this.s) + 1] - this.route.y[this.route.idx(this.s)]) / STEP))) * 3, 0, 1);
     a.update(dt, {
-      rpm: t.rpm, load: loadF, throttle: t.throttle, boost: t.boost, jake: t.jake, engineOn: t.engineOn,
+      rpm: t.rpm * (this.isCar ? 2.6 : 1), load: loadF, throttle: t.throttle, boost: t.boost, jake: t.jake, engineOn: t.engineOn,
       speed: Math.abs(t.v), offroad: t.offroad, ambient: zone === 'city' ? 1 : zone === 'industrial' ? 0.6 : 0.3,
       screech: (Math.abs(t.latAcc) > t.aRoll * 0.8 ? (Math.abs(t.latAcc) / t.aRoll - 0.8) * 3 : 0) + (t.brake > 0.8 && Math.abs(t.v) > 12 ? 0.5 : 0),
       reverse: t.gear === 'R',
@@ -773,10 +823,55 @@ export class Game {
     this.fuelUsedL = (this.fuelUsedL || 0) + t.fuelBurn(dt) * 3.5;
   }
 
+  // ---------- driving assists: lane assist + cruise control ----------
+  _assist(dt, c) {
+    const t = this.truck, r = this.route, app = this.app;
+    let steer = c.steer, throttle = c.throttle, brake = c.brake;
+    // cruise control: holds the set speed; brake cancels, accelerator raises the set speed
+    if (this.cruise) {
+      if (brake > 0.05 || c.gear !== 'D' || !t.engineOn) this.setCruise(false);
+      else if (throttle > 0.05) this.cruise = Math.max(this.cruise, t.v);
+      else {
+        const e = this.cruise - t.v;
+        throttle = Math.max(0, Math.min(1, 0.25 + e * 0.5));
+        if (e < -1.2) brake = Math.min(0.4, -e * 0.15);
+      }
+    }
+    // lane assist: when your hand is off the wheel, gently follow the lane
+    this.wheelFreeT = c.wheelHeld || c.keySteer ? 0 : (this.wheelFreeT || 0) + dt;
+    const i = r.idx(this.s);
+    const onRoad = Math.abs(this.d) < r.edge[i] && this.d > 0;
+    this.assistActive = app.laneAssist && this.wheelFreeT > 0.35 && Math.abs(t.v) > 2.5 && c.gear === 'D' && onRoad && r.bayS - this.s > 160 && !this.autopilot;
+    if (this.assistActive) {
+      const l0 = r.laneD(this.s, 1, 0), l1 = r.laneD(this.s, 1, 1);
+      const lane = Math.abs(this.d - l0) <= Math.abs(this.d - l1) ? 0 : 1;
+      const look = this.s + 10 + Math.abs(t.v) * 1.1;
+      const p = r.pos(look, r.laneD(look, 1, lane), {});
+      const err = wrapAngle(Math.atan2(p.x - t.x, p.z - t.z) - t.heading);
+      const want = clamp(-err * 650, -320, 320);
+      c.wheelDeg += (want - c.wheelDeg) * Math.min(1, dt * 2.5);
+      const x = c.wheelDeg / 450;
+      steer = Math.sign(x) * Math.pow(Math.abs(x), 1.5);
+    }
+    return { steer, throttle, brake };
+  }
+  setCruise(on) {
+    const t = this.truck;
+    if (on && (t.speedKmh < 15 || this.state !== 'drive')) { this.msg('Cruise control needs at least 15 km/h', 1.5); on = false; }
+    this.cruise = on ? t.v : 0;
+    $('bCruise').classList.toggle('on', !!this.cruise);
+    if (on) this.msg('⏱ Cruise control ON — brake to cancel', 1.8);
+  }
+  toggleCruise() { this.setCruise(!this.cruise); this.app.audio.click(); }
+
   // ---------- lights & time of day ----------
-  skyFor(s) {
-    const c = new THREE.Color(this.route.themeAt(s).sky);
-    return c.lerp(new THREE.Color(this.tod.mixCol), this.tod.mix);
+  // per-frame: sky follows the camera, sun (and its shadow) follows the truck
+  frame() {
+    const p = this.model.root.position;
+    this.sky.update(this.camera.position, this.simT);
+    const d = this.sky.sunDir;
+    this.sun.target.position.copy(p);
+    this.sun.position.set(p.x + d.x * 160, p.y + Math.max(0.25, d.y) * 160, p.z + d.z * 160);
   }
   setLights(on) {
     const L = this.model.lights;
@@ -826,8 +921,10 @@ export class Game {
   }
 
   // ---------- debug helpers (only used by tests with ?debug=1) ----------
-  teleport(s, d = 1.75, v = 0) {
-    const r = this.route, p = r.pos(s, d, {});
+  teleport(s, d = null, v = 0) {
+    const r = this.route;
+    if (d === null) d = r.laneD(s, 1, 0);
+    const p = r.pos(s, d, {});
     const t = this.truck;
     t.x = p.x; t.z = p.z; t.heading = p.h; t.trailerH = p.h; t.v = v; t.steer = 0;
     this.hint = r.idx(s); this.s = s; this.prevS = s; this.d = d;
@@ -854,6 +951,8 @@ export class Game {
     c.throttle = t.v < v - 1 ? 1 : 0;
     c.brake = t.v > v + 2 ? 0.6 : 0;
   }
+
+  cruiseText() { return this.cruise ? Math.round(this.cruise * 3.6) : 0; }
 
   hudData() {
     const t = this.truck, r = this.route;

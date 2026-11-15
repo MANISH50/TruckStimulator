@@ -82,6 +82,9 @@ export class World {
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       im.count = 0;
       im.frustumCulled = false;
+      // trees, buildings and props cast soft shadows (fields, dunes and far mountains don't)
+      im.castShadow = !['field', 'dune', 'mountain'].includes(p);
+      im.receiveShadow = true;
       im.setColorAt(0, new THREE.Color(1, 1, 1));
       this.root.add(im);
       this.inst[p] = im;
@@ -274,6 +277,11 @@ export class World {
           }
           if (R() < 0.3) put('rock', s, hs * R.range(9, 20), R() * 6, R.range(1, 3), R.range(1, 2), R.range(1, 3), tint(0.2));
         }
+        // gentle rolling hills in the distance
+        if (!hill && !th.dunes && Math.floor(s / 6) % 6 === 0 && R() < 0.45) {
+          const sd = R() < 0.5 ? 1 : -1, sc = R.range(40, 90);
+          put('dune', s + R() * 30, sd * R.range(90, 220), R() * 6, sc, R.range(30, 70), sc * R.range(0.8, 1.4), shade(th.ground, 0.12).multiplyScalar(0.92), 0, -2);
+        }
         // mountain backdrop
         if ((th.hills || hill) && Math.floor(s / 6) % 4 === 0 && R() < 0.5) {
           const sd = R() < 0.5 ? 1 : -1;
@@ -306,7 +314,8 @@ export class World {
     // signals at junctions
     for (const j of route.junctions) if (j.s >= s0 && j.s < s1) {
       const sg = { j, lamps: [], last: null, chunk: ch };
-      for (const [ds, dd, rot] of [[-10, 6.8, Math.PI / 2], [10, -6.8, -Math.PI / 2]]) {
+      const exj = route.extraAt(j.s);
+      for (const [ds, dd, rot] of [[-10, 6.8 + exj, Math.PI / 2], [10, -6.8 - exj, -Math.PI / 2]]) {
         addGeo(signalGeo(), j.s + ds, dd, rot);
         route.pos(j.s + ds, dd, _p);
         cols.push({ x: _p.x, z: _p.z, r: 0.3, kind: 'signal' });
@@ -369,7 +378,8 @@ export class World {
           cols.push({ x: _p.x, z: _p.z, r: 0.75, kind: 'wall' });
         }
       };
-      wall(bs - 45, 32, bs + 45, 32); wall(bs + 45, 32, bs + 45, 8.5);
+      const exb = route.extraAt(bs);
+      wall(bs - 45, 32 + exb, bs + 45, 32 + exb); wall(bs + 45, 32 + exb, bs + 45, 8.5 + exb);
       // bay markings
       const bay = route.bay;
       if (bay) {
@@ -396,12 +406,13 @@ export class World {
         group.add(arrow);
         this.bayArrow = arrow;
         // warehouse behind
-        addGeo(propGeo('warehouse'), bs, 46, Math.PI);
+        addGeo(propGeo('warehouse'), bs, 46 + exb, Math.PI);
       }
     }
     // road-end barricade and start barricade
     for (const se of [12, route.length - 22]) if (se >= s0 && se < s1) {
-      for (let d = -6; d <= 6; d += 1.5) {
+      const eb = route.edge[route.idx(se)] + 1.5;
+      for (let d = -eb; d <= eb; d += 1.5) {
         route.pos(se, d, _p);
         ub.box(1.5, 1.0, 0.4, _p.x, _p.y + 0.5, _p.z, Math.round(d / 1.5) % 2 ? '#d32f2f' : '#f5f5f5', 0, _p.h + Math.PI / 2, 0);
         cols.push({ x: _p.x, z: _p.z, r: 0.8, kind: 'wall' });

@@ -51,6 +51,7 @@ export class Traffic {
     const T = VEHICLE_TYPES[type];
     const variant = Math.floor(Math.random() * 9);
     const mesh = new THREE.Mesh(vehicleGeo(type, variant), VC_MAT);
+    mesh.castShadow = true;
     this.group.add(mesh);
     const edgeOff = type === 'bike' || type === 'auto' || type === 'tractor' ? 0.6 : 0;
     const slow = ['truck', 'bus', 'tractor', 'auto', 'bike'].includes(type);

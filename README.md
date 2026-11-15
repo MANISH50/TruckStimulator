@@ -1,16 +1,35 @@
 # India Truck Simulator
 
-A free 3D truck driving game that runs in your phone's web browser. No install needed.
+A free 3D driving game that runs in your phone's web browser. No install needed. Two ways to play:
+- **🚚 Truck Job:** deliver cargo across India.
+- **🚗 Long Drive:** a relaxing road trip in a fast, comfortable car.
 Drive a truck across Indian states, keep to the **left**, carry cargo, refuel at diesel pumps, rest at dhabas, and park in the depot bay to finish the delivery.
 
 **▶ Play now: https://manish50.github.io/TruckStimulator/**
 
 Turn your phone sideways: the game is played in **landscape only**.
 
-![Gameplay: a diesel tanker on a ghat road](docs/screenshot.png)
+![Truck Job: a car carrier on a 4-lane ghat road](docs/screenshot.png)
+
+![Long Drive: a sports coupe on an open highway](docs/long-drive.png)
 
 ## Features
 
+- **Long Drive mode:** pick one of 3 fast, comfortable cars (Luxury Sedan 200 km/h, Sports Coupe 250 km/h, Comfort SUV 180 km/h) and any route on the India map.
+  - Longer trips (about 15–25 minutes) with no cargo and no time pressure.
+  - Park at the destination to finish and get a "Drive complete" summary.
+- **Comfortable driving:**
+  - **Lane assist:** let go of the wheel and the vehicle gently follows its lane through curves. Toggle it with the lane button.
+  - **Cruise control:** tap CRUISE to hold your speed; the brake cancels it.
+  - softer steering near the centre, a calm, smooth chase camera
+- **Calm radio:** relaxing Indian-style music made in code (tanpura drone, bansuri-like flute in raga Bhupali), plus birdsong by day and crickets at night. Toggle it with 📻.
+- **Natural graphics:**
+  - filmic lighting, real-time soft shadows, a sky with sun, clouds, sunset or moon and stars
+  - natural surface detail on roads and fields, rolling hills on the horizon
+  - bright, readable night mode with a long headlight beam
+  - quality adjusts automatically on slower phones
+
+- **Wide roads:** 5 m lanes. City streets are 2 lanes; outside cities a 4-lane divided highway with paved shoulders.
 - **5 trucks, all unlocked:** Mini Truck, Cargo Truck (10-wheeler), Trailer Truck, Highway Express (130 km/h) and Turbo Hauler (160 km/h).
 - **Speed governor switch:** real Indian goods vehicles are limited to 80 km/h, and tankers and dumpers to 60 km/h. You can switch the limiter off for the fast trucks.
 - **11 cargo jobs, all unlocked:** general goods, iron ore, wooden logs, new cars, diesel tanker, steel coils, container, fruits & vegetables, glass & electronics, cement and milk.
@@ -42,7 +61,7 @@ Turn your phone sideways: the game is played in **landscape only**.
 
 ## How to play
 
-1. Tap **PLAY**, choose a truck, then a cargo.
+1. Tap **TRUCK JOB** (choose a truck, then a cargo) or **LONG DRIVE** (choose a car).
 2. On the map, tap a **FROM** city and a **TO** city (or use the drop-down lists). On the trip summary, pick Day, Evening or Night, then tap **START DRIVING**.
 3. Drive:
 
@@ -55,6 +74,9 @@ Turn your phone sideways: the game is played in **landscape only**.
 | ❚❚ | Pause (Resume / Restart / Quit) |
 | 🔊 | Mute / unmute |
 | Headlight button (top-left) | Headlights on / off |
+| CRUISE (above the accelerator) | Hold the current speed; brake cancels |
+| Lane button (top-left) | Lane assist on / off |
+| 📻 | Calm radio on / off |
 | ⛽ REFUEL / 🍲 REST | Appear when you stop inside a pump or dhaba bay on the left side of the road. |
 
 4. **Win:** reach the destination depot and stop with the whole truck inside the **yellow parking bay** (a floating arrow marks it). You get 1–3 stars for speed, safe driving and parking accuracy, plus your earnings.
@@ -76,6 +98,7 @@ On a computer you can use the keyboard:
 - **M**: mute
 - **E**: refuel or rest
 - **L**: headlights
+- **K**: cruise control
 
 ## Run it locally
 
