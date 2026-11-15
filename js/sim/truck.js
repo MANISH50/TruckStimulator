@@ -30,10 +30,10 @@ export class Truck {
     this.vTop = spec.vmax / 3.6;                // m/s at redline in top gear
     this.F1 = this.refMass * spec.a1;           // peak force in 1st gear
     this.nGears = 6;
-    this.cogH = (spec.id === 'mini' ? 1.0 : 1.35) + cargo.cog * Math.min(1, spec.capacity + 0.2);
+    this.cogH = spec.cogH ?? ((spec.id === 'mini' ? 1.0 : 1.35) + cargo.cog * Math.min(1, spec.capacity + 0.2));
     this.track = spec.width * 0.82;
     this.aRoll = G * (this.track / 2) / this.cogH;      // lateral accel that tips the truck
-    this.CdA = spec.id === 'mini' ? 4.5 : spec.id === 'express' ? 6.0 : spec.id === 'turbo' ? 6.5 : 8.0;
+    this.CdA = spec.CdA ?? (spec.id === 'mini' ? 4.5 : spec.id === 'express' ? 6.0 : spec.id === 'turbo' ? 6.5 : 8.0);
     // engine power: enough to reach top speed with margin (good mid-range pickup)
     const vt = this.vTop, crr0 = 0.008;
     this.Pmax = (0.5 * 1.2 * this.CdA * vt * vt + crr0 * this.refMass * G) * vt * (spec.pmul || 1.5);
@@ -64,7 +64,7 @@ export class Truck {
     // stability assist: limits steering so full lock at speed is only slightly above the tipping point
     const av = Math.abs(v);
     if (av < 4) return this.spec.maxSteer;
-    const aLim = this.aRoll * 1.3;
+    const aLim = this.spec.grip ? Math.min(this.aRoll * 1.3, this.spec.grip * 0.95) : this.aRoll * 1.3;
     return Math.min(this.spec.maxSteer, Math.atan(this.L * aLim / (av * av)));
   }
 
@@ -72,7 +72,7 @@ export class Truck {
     const s = this.spec;
     // ---------- steering (heavy, rate limited) ----------
     const target = -inp.steer * this.maxSteerAt(this.v);
-    const rate = 1.4;
+    const rate = 0.35 + 1.1 / (1 + Math.abs(this.v) / 20); // calmer steering at speed
     this.steer += clamp(target - this.steer, -rate * dt, rate * dt);
 
     // ---------- pedals ----------

@@ -203,8 +203,194 @@ export function addCargo(b, cargo, w, l, y0, zc, sides = 0) {
   }
 }
 
+
+// ---------- shared cab parts (trucks and cars) ----------
+function addGauges(interior, spec, seatX, eyeY, dashZ0) {
+  const gauges = {};
+  const vMax = spec.vmax > 100 ? Math.ceil((spec.vmax + 5) / 20) * 20 : 120;
+  for (const [k, gx, r] of [['speed', 0.13, 0.1], ['rpm', -0.13, 0.1], ['fuel', -0.33, 0.065]]) {
+    const dial = new THREE.Mesh(new THREE.CircleGeometry(r, 20), new THREE.MeshBasicMaterial({ map: dialTexture(k, vMax) }));
+    const holder = new THREE.Group();
+    holder.position.set(seatX + gx * 0.9, eyeY - 0.26 - (k === 'fuel' ? 0.02 : 0), dashZ0 + 0.02);
+    holder.rotation.set(-0.35, Math.PI, 0);
+    holder.add(dial);
+    const nb = new Builder(); nb.box(0.008, r * 0.85, 0.004, 0, r * 0.4, 0, '#ff3d00');
+    const needle = nb.mesh(); needle.position.set(0, k === 'fuel' ? -r * 0.15 : 0, 0.004);
+    holder.add(needle);
+    interior.add(holder);
+    gauges[k] = needle;
+  }
+  gauges.vMax = vMax;
+  const lampG = new THREE.SphereGeometry(0.012, 8, 6);
+  gauges.headLamp = new THREE.Mesh(lampG, new THREE.MeshBasicMaterial({ color: '#10203a' }));
+  gauges.fuelLamp = new THREE.Mesh(lampG, new THREE.MeshBasicMaterial({ color: '#3a2a08' }));
+  gauges.headLamp.position.set(seatX + 0.03, eyeY - 0.17, dashZ0 + 0.04);
+  gauges.fuelLamp.position.set(seatX - 0.03, eyeY - 0.17, dashZ0 + 0.04);
+  interior.add(gauges.headLamp, gauges.fuelLamp);
+  return gauges;
+}
+
+function addSteering(interior, x, y, z, r, rim = '#6d4c41') {
+  const sw = new Builder();
+  sw.addGeometry(new THREE.TorusGeometry(r, 0.03, 6, 20), rim);
+  sw.box(r * 1.9, 0.045, 0.03, 0, 0, 0, '#9e9e9e');
+  sw.box(0.045, r * 0.95, 0.03, 0, -r * 0.48, 0, '#9e9e9e');
+  sw.cyl(0.065, 0.065, 0.05, 10, 0, 0, 0, '#c9a227', Math.PI / 2, 0, 0);
+  const pivot = new THREE.Group();
+  pivot.position.set(x, y, z);
+  pivot.rotation.x = -0.7; // tilt (top toward driver)
+  pivot.add(sw.mesh());
+  interior.add(pivot);
+  return pivot;
+}
+
+function addLights(root, W, lampY, front, tailZ, tailY, lw, lh) {
+  const lights = { on: false };
+  const headMat = new THREE.MeshBasicMaterial({ color: '#cfc9ad' });
+  const tailMat = new THREE.MeshBasicMaterial({ color: '#4a0d0d' });
+  lights.headMat = headMat; lights.tailMat = tailMat;
+  lights.glows = [];
+  for (const sx of [1, -1]) {
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(lw, lh, 0.05), headMat);
+    lamp.position.set(sx * (W / 2 - 0.3), lampY, front + 0.035);
+    root.add(lamp);
+    const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: '#fff6d0', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    gl.position.set(sx * (W / 2 - 0.3), lampY, front + 0.25);
+    gl.scale.set(1.6, 1.6, 1.6);
+    gl.visible = false;
+    root.add(gl); lights.glows.push(gl);
+  }
+  // long, bright beam on the road (night driving)
+  const beamMat = new THREE.MeshBasicMaterial({ map: beamTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.5, polygonOffset: true, polygonOffsetFactor: -4 });
+  const beam = new THREE.Mesh(new THREE.PlaneGeometry(17, 48), beamMat);
+  beam.rotation.x = -Math.PI / 2;
+  beam.position.set(0, 0.08, front + 24.5);
+  beam.visible = false;
+  root.add(beam);
+  lights.beam = beam;
+  if (tailZ !== null) for (const sx of [1, -1]) {
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.04), tailMat);
+    tl.position.set(sx * (W / 2 - 0.25), tailY, tailZ);
+    root.add(tl);
+  }
+  return lights;
+}
+
+// ---------- player car (Long Drive mode) ----------
+// Same interface as buildPlayerTruck. Origin at the rear axle, +Z forward, +X left.
+export function buildPlayerCar(spec) {
+  const root = new THREE.Group();
+  const W = spec.width, wb = spec.wheelbase;
+  const suv = spec.body === 'suv', coupe = spec.body === 'coupe';
+  const wheelR = suv ? 0.4 : 0.34;
+  const front = wb + (coupe ? 1.05 : 0.95);
+  const rearZ = front - spec.length;
+  const sill = suv ? 0.42 : 0.3;            // bottom of body
+  const belt = suv ? 1.12 : coupe ? 0.82 : 0.9; // top of doors / hood line
+  const roof = suv ? 1.78 : coupe ? 1.26 : 1.44;
+  const wsBase = wb * (coupe ? 0.55 : 0.62);  // windshield base (z)
+  const wsTop = wsBase - (roof - belt) * (coupe ? 1.6 : 1.1);
+  const rgTop = rearZ + (suv ? 0.55 : coupe ? 1.5 : 1.25); // rear glass top
+  const rgBase = rearZ + (suv ? 0.25 : coupe ? 0.5 : 0.7);
+  const col = spec.color, acc = spec.accent;
+  const len = front - rearZ, zc = (front + rearZ) / 2;
+
+  // body: lower shell, hood, boot, bumpers, arches (always visible, also from the driver seat)
+  const b = new Builder({ detail: 1 });
+  b.box(W, belt - sill, len - 0.2, 0, (sill + belt) / 2, zc, col);
+  b.box(W - 0.04, 0.12, front - wsBase - 0.05, 0, belt + 0.02, (front + wsBase) / 2, col, 0.05, 0, 0);
+  b.box(W - 0.04, 0.1, rgBase - rearZ, 0, belt + 0.02, (rgBase + rearZ) / 2 + 0.05, col);
+  b.box(W + 0.02, 0.28, 0.2, 0, sill + 0.12, front - 0.05, acc);
+  b.box(W + 0.02, 0.28, 0.2, 0, sill + 0.12, rearZ + 0.05, acc);
+  b.box(W * 0.45, 0.14, 0.04, 0, sill + 0.34, front + 0.04, '#1a1a1a');           // grille
+  b.box(W * 0.3, 0.1, 0.03, 0, sill + 0.3, rearZ - 0.01, '#ececec');                // number plate (blank)
+  b.box(W + 0.03, 0.06, len - 0.6, 0, sill + 0.05, zc, '#1c1c1c');                 // side skirt
+  for (const z of [wb, 0]) for (const sd of [1, -1]) b.box(0.06, 0.18, 0.95, sd * (W / 2 + 0.005), wheelR * 2 - 0.05, z, '#151515');
+  // chrome / accent stripe along the side
+  b.box(W + 0.02, 0.04, len - 0.5, 0, belt - 0.12, zc, coupe ? acc : '#c9ccd0');
+  if (suv) { b.box(0.05, 0.05, 2.1, W / 2 - 0.15, roof + 0.05, (wsTop + rgTop) / 2, '#2b2b2b'); b.box(0.05, 0.05, 2.1, -W / 2 + 0.15, roof + 0.05, (wsTop + rgTop) / 2, '#2b2b2b'); }
+  if (coupe) b.box(W - 0.2, 0.05, 0.3, 0, belt + 0.18, rearZ + 0.18, acc);          // small spoiler
+  // mirrors
+  b.box(0.18, 0.12, 0.2, W / 2 + 0.08, belt + 0.12, wsBase - 0.1, col);
+  b.box(0.18, 0.12, 0.2, -W / 2 - 0.08, belt + 0.12, wsBase - 0.1, col);
+  const body = b.mesh();
+  root.add(body);
+
+  // greenhouse: roof, pillars, glass (hidden in driver view)
+  const c = new Builder();
+  const gh = roof - belt;
+  c.box(W - 0.16, 0.07, wsTop - rgTop, 0, roof, (wsTop + rgTop) / 2, col);
+  const wsLen = Math.hypot(wsBase - wsTop, gh), wsAng = Math.atan2(wsBase - wsTop, gh);
+  c.box(W - 0.22, wsLen, 0.04, 0, belt + gh / 2, (wsBase + wsTop) / 2, GLASS, -wsAng, 0, 0);
+  const rgLen = Math.hypot(rgTop - rgBase, gh), rgAng = Math.atan2(rgTop - rgBase, gh);
+  c.box(W - 0.22, rgLen, 0.04, 0, belt + gh / 2, (rgBase + rgTop) / 2, GLASS, rgAng, 0, 0);
+  for (const sd of [1, -1]) {
+    c.box(0.04, gh * 0.9, wsTop - rgTop + 0.3, sd * (W / 2 - 0.1), belt + gh * 0.48, (wsTop + rgTop) / 2, GLASS);
+    c.box(0.07, gh, 0.08, sd * (W / 2 - 0.1), belt + gh / 2, (wsTop + rgTop) / 2, col); // B-pillar
+  }
+  const cabShell = c.mesh();
+  root.add(cabShell);
+  const cabTop = roof;
+
+  // ---- car interior (driver view)
+  const interior = new THREE.Group();
+  const seatX = -(W / 2 - 0.5);                  // right-hand drive
+  const eyeY = suv ? 1.5 : coupe ? 1.02 : 1.16;
+  const eyeZ = wsBase - (coupe ? 1.15 : 1.05);
+  const dashZ0 = eyeZ + 0.5, dashZ1 = wsBase + 0.05;
+  const ib = new Builder();
+  ib.box(W - 0.12, 0.42, dashZ1 - dashZ0, 0, eyeY - 0.55, (dashZ0 + dashZ1) / 2, '#2b2724');
+  ib.box(W - 0.12, 0.05, dashZ1 - dashZ0 + 0.05, 0, eyeY - 0.33, (dashZ0 + dashZ1) / 2, '#1d1a18', -0.15, 0, 0);
+  ib.box(0.55, 0.14, 0.12, seatX, eyeY - 0.26, dashZ0 + 0.08, '#141414', -0.35, 0, 0);
+  // centre touch screen and wood trim
+  ib.box(0.32, 0.2, 0.03, seatX + 0.62, eyeY - 0.33, dashZ0 + 0.02, '#0e2233');
+  ib.box(0.3, 0.17, 0.02, seatX + 0.62, eyeY - 0.33, dashZ0 + 0.0, '#2a6fa0');
+  ib.box(W - 0.2, 0.04, 0.03, 0, eyeY - 0.42, dashZ0 - 0.01, '#6b4a2b');
+  // A-pillars, roof liner, doors
+  for (const sd of [1, -1]) {
+    ib.box(0.05, 0.6, 0.05, sd * (W / 2 - 0.06), eyeY + 0.08, wsBase - 0.3, '#2e2a27', -0.85, 0, 0);
+    ib.box(0.07, 0.4, 2.0, sd * (W / 2 - 0.05), eyeY - 0.45, eyeZ, '#3a3531');
+  }
+  ib.box(W - 0.2, 0.04, 1.6, 0, eyeY + 0.36, eyeZ - 0.2, '#d8d2c6');
+  ib.box(0.04, 0.3, 0.04, seatX + 0.55, eyeY - 0.68, eyeZ + 0.2, '#222');            // gear selector
+  ib.sphere(0.045, seatX + 0.55, eyeY - 0.52, eyeZ + 0.2, '#111');
+  ib.box(W - 0.16, 0.05, 0.06, 0, eyeY - 0.27, dashZ1, col);
+  interior.add(ib.mesh());
+  const gauges = addGauges(interior, spec, seatX, eyeY, dashZ0);
+  const steerPivot = addSteering(interior, seatX, eyeY - 0.36, eyeZ + 0.38, 0.19, '#1f1f1f');
+  interior.visible = false;
+  root.add(interior);
+
+  // ---- lights
+  const lights = addLights(root, W, sill + 0.42, front - 0.02, rearZ + 0.02, sill + 0.48, 0.42, 0.13);
+
+  // ---- wheels with alloy rims
+  const wheels = [], frontWheels = [];
+  const mkWheel = () => {
+    const w = new Builder();
+    w.wheel(wheelR, 0.26, 0, 0, 0, '#161616', '#c9ccd0', 16);
+    for (let k = 0; k < 5; k++) w.box(0.03, wheelR * 1.2, 0.07, 0.14, 0, 0, '#9ea3a8', k * Math.PI / 5, 0, 0);
+    return w.mesh();
+  };
+  for (const side of [1, -1]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * (W / 2 - 0.2), wheelR, wb);
+    const w = mkWheel(); pivot.add(w); root.add(pivot);
+    frontWheels.push(pivot); wheels.push(w);
+    const r = mkWheel(); r.position.set(side * (W / 2 - 0.2), wheelR, 0); root.add(r); wheels.push(r);
+  }
+  const cargoGroup = new THREE.Group();
+  root.add(cargoGroup);
+  return {
+    root, body, cabShell, interior, steerPivot, gauges, lights, wheels, frontWheels, cargoGroup, cargoMesh: null, trailer: null,
+    wheelR, cabFront: front, cabBack: wsBase, rearZ, cabTop, cargoTop: cabTop,
+    seat: new THREE.Vector3(seatX, eyeY, eyeZ), hitchZ: 0.3, car: true,
+  };
+}
+
 // ---------- player truck ----------
 export function buildPlayerTruck(spec, cargo) {
+  if (spec.car) return buildPlayerCar(spec);
   const root = new THREE.Group();
   const W = spec.width;
   const tractor = spec.trailer > 0;
@@ -221,7 +407,6 @@ export function buildPlayerTruck(spec, cargo) {
 
   // ---- static body (chassis + bed + bumpers)
   const b = new Builder();
-  b.plane(W + 0.4, cabFront - rearZ + 0.6, 0, 0.03, (cabFront + rearZ) / 2, '#151515'); // shadow
   b.box(0.22, 0.28, cabFront - rearZ - 0.3, W * 0.28, frameY - 0.25, (cabFront + rearZ) / 2, '#222');
   b.box(0.22, 0.28, cabFront - rearZ - 0.3, -W * 0.28, frameY - 0.25, (cabFront + rearZ) / 2, '#222');
   // bumper
@@ -377,75 +562,13 @@ export function buildPlayerTruck(spec, cargo) {
   ib.box(W, 0.06, 0.08, 0, eyeY - 0.27, cabFront - 0.08, col);
   const interiorMesh = ib.mesh();
   interior.add(interiorMesh);
-  // gauges (speed, rpm, fuel) with moving needles
-  const gauges = {};
-  const vMax = spec.vmax > 100 ? Math.ceil((spec.vmax + 5) / 20) * 20 : 120;
-  for (const [k, gx, r] of [['speed', 0.13, 0.1], ['rpm', -0.13, 0.1], ['fuel', -0.33, 0.065]]) {
-    const dial = new THREE.Mesh(new THREE.CircleGeometry(r, 20), new THREE.MeshBasicMaterial({ map: dialTexture(k, vMax) }));
-    const holder = new THREE.Group();
-    holder.position.set(seatX + gx * 0.9, eyeY - 0.26 - (k === 'fuel' ? 0.02 : 0), dashZ0 + 0.02);
-    holder.rotation.set(-0.35, Math.PI, 0);
-    holder.add(dial);
-    const nb = new Builder(); nb.box(0.008, r * 0.85, 0.004, 0, r * 0.4, 0, '#ff3d00');
-    const needle = nb.mesh(); needle.position.set(0, k === 'fuel' ? -r * 0.15 : 0, 0.004);
-    holder.add(needle);
-    interior.add(holder);
-    gauges[k] = needle;
-  }
-  gauges.vMax = vMax;
-  // warning lamps on the dash: headlights (blue) and low fuel (amber)
-  const lampG = new THREE.SphereGeometry(0.012, 8, 6);
-  gauges.headLamp = new THREE.Mesh(lampG, new THREE.MeshBasicMaterial({ color: '#10203a' }));
-  gauges.fuelLamp = new THREE.Mesh(lampG, new THREE.MeshBasicMaterial({ color: '#3a2a08' }));
-  gauges.headLamp.position.set(seatX + 0.03, eyeY - 0.17, dashZ0 + 0.04);
-  gauges.fuelLamp.position.set(seatX - 0.03, eyeY - 0.17, dashZ0 + 0.04);
-  interior.add(gauges.headLamp, gauges.fuelLamp);
-  // steering wheel
-  const sw = new Builder();
-  sw.addGeometry(new THREE.TorusGeometry(0.23, 0.03, 6, 20), '#6d4c41');
-  sw.box(0.44, 0.045, 0.03, 0, 0, 0, '#9e9e9e');
-  sw.box(0.045, 0.22, 0.03, 0, -0.11, 0, '#9e9e9e');
-  sw.cyl(0.065, 0.065, 0.05, 10, 0, 0, 0, '#c9a227', Math.PI / 2, 0, 0);
-  const steerMesh = sw.mesh();
-  const steerPivot = new THREE.Group();
-  steerPivot.position.set(seatX, eyeY - 0.37, eyeZ + 0.44);
-  steerPivot.rotation.x = -0.7; // tilt (top toward driver)
-  steerPivot.add(steerMesh);
-  interior.add(steerPivot);
+  const gauges = addGauges(interior, spec, seatX, eyeY, dashZ0);
+  const steerPivot = addSteering(interior, seatX, eyeY - 0.37, eyeZ + 0.44, 0.23);
   interior.visible = false;
   root.add(interior);
 
   // ---- lights (headlamps, glow, beam on the road, tail lamps)
-  const lights = { on: false };
-  const headMat = new THREE.MeshBasicMaterial({ color: '#cfc9ad' });
-  const tailMat = new THREE.MeshBasicMaterial({ color: '#4a0d0d' });
-  lights.headMat = headMat; lights.tailMat = tailMat;
-  const lampY = cabBottom + 0.25;
-  lights.glows = [];
-  for (const sx of [1, -1]) {
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.23, 0.05), headMat);
-    lamp.position.set(sx * (W / 2 - 0.3), lampY, cabFront + 0.035);
-    root.add(lamp);
-    const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: '#fff6d0', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-    gl.position.set(sx * (W / 2 - 0.3), lampY, cabFront + 0.25);
-    gl.scale.set(1.6, 1.6, 1.6);
-    gl.visible = false;
-    root.add(gl); lights.glows.push(gl);
-  }
-  const beamMat = new THREE.MeshBasicMaterial({ map: beamTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.5, polygonOffset: true, polygonOffsetFactor: -4 });
-  const beam = new THREE.Mesh(new THREE.PlaneGeometry(13, 34), beamMat);
-  beam.rotation.x = -Math.PI / 2;
-  beam.position.set(0, 0.08, cabFront + 17.5);
-  beam.visible = false;
-  root.add(beam);
-  lights.beam = beam;
-  const tailZ = tractor ? null : rearZ - 0.03;
-  if (tailZ !== null) for (const sx of [1, -1]) {
-    const tl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.04), tailMat);
-    tl.position.set(sx * (W / 2 - 0.25), frameY - 0.2, tailZ);
-    root.add(tl);
-  }
-
+  const lights = addLights(root, W, cabBottom + 0.25, cabFront, tractor ? null : rearZ - 0.03, frameY - 0.2, 0.36, 0.23);
   // ---- wheels
   const wheels = [];
   const frontWheels = [];
@@ -481,7 +604,6 @@ export function buildPlayerTruck(spec, cargo) {
     const deckY = 1.35, front = 1.0, back = -(Lt - 1.0);
     const zc = (front + back) / 2;
     const axleZ = back + 2.0;
-    tb.plane(W + 0.4, Lt + 0.4, 0, 0.03, zc, '#151515');
     tb.box(W, 0.2, Lt, 0, deckY, zc, '#3c3c3c');
     tb.box(0.3, 0.35, Lt, W * 0.3, deckY - 0.25, zc, '#222');
     tb.box(0.3, 0.35, Lt, -W * 0.3, deckY - 0.25, zc, '#222');
@@ -612,12 +734,14 @@ export function buildVehicleGeo(type, variant) {
 
 // ---------- props (all return BufferGeometry, local origin on ground) ----------
 export function propGeo(kind, opt = {}) {
-  const b = new Builder();
+  // rounder, smoother canopies for trees
+  const b = new Builder({ detail: kind.startsWith('tree_') ? 1 : 0 });
   switch (kind) {
     case 'tree_round':
       b.cyl(0.18, 0.25, 2.2, 6, 0, 1.1, 0, '#6b4a2b');
       b.sphere(1.6, 0, 3.1, 0, '#4f8a2e', 1, 0.85, 1);
       b.sphere(1.1, 0.7, 3.8, 0.3, '#5a9a35', 1, 0.9, 1);
+      b.sphere(1.0, -0.8, 3.4, -0.4, '#4a8430', 1, 0.9, 1);
       break;
     case 'tree_mango':
       b.cyl(0.25, 0.32, 1.8, 6, 0, 0.9, 0, '#5a3d24');
@@ -667,7 +791,9 @@ export function propGeo(kind, opt = {}) {
       b.cone(1, 1, 7, 0, 0.5, 0, '#6d7f52');
       break;
     case 'field':
-      b.box(1, 0.12, 1, 0, 0.06, 0, '#ffffff');
+      // crop rows
+      b.box(1, 0.1, 1, 0, 0.05, 0, '#d4d4d4');
+      for (let k = 0; k < 10; k++) b.box(0.05, 0.08, 1, -0.45 + k * 0.1, 0.12, 0, k % 2 ? '#ffffff' : '#e8e8e8');
       break;
     case 'building': // unit box with window bands, tinted per instance
       b.box(1, 1, 1, 0, 0.5, 0, '#ffffff');

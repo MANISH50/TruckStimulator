@@ -24,7 +24,7 @@ class Biquad {
 class DieselEngine extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     return [
-      { name: 'rpm', defaultValue: 650, minValue: 0, maxValue: 4000, automationRate: 'k-rate' },
+      { name: 'rpm', defaultValue: 650, minValue: 0, maxValue: 9000, automationRate: 'k-rate' },
       { name: 'load', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
       { name: 'throttle', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
       { name: 'boost', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },

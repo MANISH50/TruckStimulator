@@ -29,6 +29,10 @@
     <button id="bMute" class="rbtn" aria-label="Mute">🔊</button>
     <button id="bLights" class="rbtn" aria-label="Headlights"><svg viewBox="0 0 40 40" width="26" height="26"><path d="M17 8c-7 0-11 5-11 12s4 12 11 12c3 0 4-1 4-3V11c0-2-1-3-4-3z" fill="currentColor"/><g stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="25" y1="12" x2="36" y2="10"/><line x1="25" y1="20" x2="37" y2="20"/><line x1="25" y1="28" x2="36" y2="30"/></g></svg></button>
   </div>
+  <div id="tl2">
+    <button id="bAssist" class="rbtn on" aria-label="Lane assist"><svg viewBox="0 0 40 40" width="26" height="26"><g stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round"><path d="M10 36 L16 4"/><path d="M30 36 L24 4"/></g><g fill="currentColor"><rect x="18.5" y="8" width="3" height="5"/><rect x="18.5" y="18" width="3" height="5"/><rect x="18.5" y="28" width="3" height="6"/></g></svg></button>
+    <button id="bRadio" class="rbtn" aria-label="Radio">📻</button>
+  </div>
   <div id="camName"></div>
   <div id="dash">
     <div class="dcell speedo">
@@ -56,7 +60,7 @@
     </div>
     <div class="dcell bars">
       <div class="bar"><span>😴</span><i><em id="dTired"></em></i></div>
-      <div class="bar"><span>📦</span><i><em id="dCargo"></em></i></div>
+      <div class="bar cargoBar"><span>📦</span><i><em id="dCargo"></em></i></div>
     </div>
     <div class="dcell dist"><b id="dDist">0.0</b><small>km left</small></div>
     <div class="dcell arrow"><div id="dArrow">⬆</div><small id="dNext"></small></div>
@@ -88,6 +92,7 @@
     <button id="gN" class="gbtn">N</button>
     <button id="gD" class="gbtn on">D</button>
   </div>
+  <button id="bCruise" class="cruise"><small>CRUISE</small><b id="cruiseVal">OFF</b></button>
   <button id="brake" class="pedal brake"><span>BRAKE</span></button>
   <button id="accel" class="pedal accel"><span>ACCEL</span></button>
 </div>
@@ -98,13 +103,16 @@
     <div class="logo">🚚</div>
     <h1>India Truck<br><span>Simulator</span></h1>
     <p class="sub">Drive across India • Keep left • Deliver on time</p>
-    <button id="bPlay" class="big">▶ PLAY</button>
+    <div class="modes">
+      <button id="bPlay" class="big">🚚 TRUCK JOB<small>Deliver cargo across India</small></button>
+      <button id="bDrive" class="big alt">🚗 LONG DRIVE<small>Relaxing road trip in a fast car</small></button>
+    </div>
     <p class="hint">Best in landscape with sound on 🔊</p>
   </div>
 </section>
 
 <section id="garage" class="screen clear hidden">
-  <header><button class="back" data-go="menu">‹ Back</button><h2>Choose your truck</h2><span class="tag">All trucks unlocked</span></header>
+  <header><button class="back" data-go="menu">‹ Back</button><h2 id="gTitle">Choose your truck</h2><span class="tag" id="gTag">All trucks unlocked</span></header>
   <button id="gPrev" class="side left">‹</button>
   <button id="gNext" class="side right">›</button>
   <div class="panel bottom">
@@ -127,7 +135,7 @@
 </section>
 
 <section id="route" class="screen hidden">
-  <header><button class="back" data-go="cargo">‹ Back</button><h2>Choose your route</h2><span class="tag" id="rStep">Tap a FROM city</span></header>
+  <header><button class="back" id="rBack">‹ Back</button><h2>Choose your route</h2><span class="tag" id="rStep">Tap a FROM city</span></header>
   <div class="routeWrap">
     <div id="mapBox"><svg id="map" viewBox="0 0 400 440"></svg></div>
     <div class="panel sidepanel">
@@ -179,7 +187,7 @@
 
 <section id="win" class="screen hidden">
   <div class="card">
-    <h2 class="good">DELIVERY COMPLETE</h2>
+    <h2 class="good" id="winTitle">DELIVERY COMPLETE</h2>
     <div id="stars"></div>
     <div id="winBody"></div>
     <div class="btnRow"><button id="wAgain" class="big small">↻ Play again</button><button id="wRoute" class="ghost">🗺 Choose a new route</button></div>

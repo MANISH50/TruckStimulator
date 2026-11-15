@@ -45,7 +45,7 @@ export class Audio {
     if (this.fallback) { for (const o of this.fallback.osc) o.stop(); this.fallback.out.disconnect(); this.fallback = null; }
     const ctx = this.ctx;
     this.engGain = this.engGain || ctx.createGain();
-    this.engGain.gain.value = 0.85;
+    this.engGain.gain.value = 0.6; // quieter, more relaxing engine
     this.engGain.connect(this.master);
     try {
       if (!this.workletLoaded) {
@@ -208,6 +208,141 @@ export class Audio {
     // scraping
     this._noiseBurst('bandpass', 1200, 3, 0.25 * I, 0.1, 1.6, 0.2);
   }
+  // ---------- calm radio: tanpura drone, bansuri-style flute (raga Bhupali), soft pad ----------
+  _reverb() {
+    if (this.verb) return this.verb;
+    const ctx = this.ctx, len = Math.floor(ctx.sampleRate * 2.8);
+    const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+    const cv = ctx.createConvolver(); cv.buffer = ir;
+    const g = ctx.createGain(); g.gain.value = 0.55;
+    cv.connect(g); g.connect(this.master);
+    this.verb = cv;
+    return cv;
+  }
+  setRadio(on) {
+    if (!this.ready) return;
+    const ctx = this.ctx;
+    if (!this.radioBus) {
+      this.radioBus = ctx.createGain(); this.radioBus.gain.value = 0;
+      this.radioBus.connect(this.master); this.radioBus.connect(this._reverb());
+    }
+    this.radioBus.gain.setTargetAtTime(on ? 0.55 : 0, ctx.currentTime, 0.6);
+    if (on && !this.radioTimer) {
+      this.mT = ctx.currentTime + 0.2; this.tanT = this.mT; this.fluteT = this.mT + 3; this.tanI = 0;
+      this._pad();
+      this.radioTimer = setInterval(() => this._schedule(), 200);
+    }
+    if (!on && this.radioTimer) { clearInterval(this.radioTimer); this.radioTimer = null; if (this.padNodes) { for (const o of this.padNodes) o.stop(ctx.currentTime + 1.5); this.padNodes = null; } }
+  }
+  _pad() {
+    const ctx = this.ctx;
+    const g = ctx.createGain(); g.gain.value = 0.05;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 700;
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.07;
+    const lg = ctx.createGain(); lg.gain.value = 0.02; lfo.connect(lg); lg.connect(g.gain);
+    this.padNodes = [lfo];
+    for (const fr of [146.83, 220, 293.66]) {
+      const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = fr; o.detune.value = (Math.random() - 0.5) * 8;
+      o.connect(f); o.start(); this.padNodes.push(o);
+    }
+    f.connect(g); g.connect(this.radioBus); lfo.start();
+  }
+  _pluck(t, fr) {
+    const ctx = this.ctx;
+    const g = ctx.createGain();
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 2;
+    f.frequency.setValueAtTime(2600, t); f.frequency.exponentialRampToValueAtTime(500, t + 3.5);
+    for (const d of [0, 4]) {
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = fr; o.detune.value = d;
+      o.connect(f); o.start(t); o.stop(t + 4.5);
+    }
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.07, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0008, t + 4.3);
+    f.connect(g); g.connect(this.radioBus);
+  }
+  _flute(t, notes) {
+    const ctx = this.ctx;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    const o2 = ctx.createOscillator(); o2.type = 'sine';
+    const g2 = ctx.createGain(); g2.gain.value = 0.12;
+    const vib = ctx.createOscillator(); vib.frequency.value = 5.2;
+    const vg = ctx.createGain(); vg.gain.value = 0;
+    vib.connect(vg); vg.connect(o.detune); vg.connect(o2.detune);
+    const breath = ctx.createBufferSource(); breath.buffer = this.noise; breath.loop = true;
+    const bf = ctx.createBiquadFilter(); bf.type = 'bandpass'; bf.Q.value = 4;
+    const bg = ctx.createGain(); bg.gain.value = 0.025;
+    breath.connect(bf); bf.connect(bg);
+    const env = ctx.createGain(); env.gain.value = 0;
+    o.connect(env); o2.connect(g2); g2.connect(env); bg.connect(env); env.connect(this.radioBus);
+    let tt = t;
+    for (let k = 0; k < notes.length; k++) {
+      const [fr, dur] = notes[k];
+      if (k === 0) { o.frequency.setValueAtTime(fr, tt); o2.frequency.setValueAtTime(fr * 2, tt); bf.frequency.setValueAtTime(fr, tt); }
+      else { o.frequency.setTargetAtTime(fr, tt, 0.04); o2.frequency.setTargetAtTime(fr * 2, tt, 0.04); bf.frequency.setTargetAtTime(fr, tt, 0.04); }
+      vg.gain.setValueAtTime(0, tt); vg.gain.linearRampToValueAtTime(14, tt + Math.min(dur, 0.6));
+      tt += dur;
+    }
+    env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(0.09, t + 0.18);
+    env.gain.setValueAtTime(0.09, tt - 0.1); env.gain.linearRampToValueAtTime(0, tt + 0.6);
+    for (const n of [o, o2, vib, breath]) { n.start(t); n.stop(tt + 0.8); }
+    return tt;
+  }
+  _schedule() {
+    const ctx = this.ctx, ahead = ctx.currentTime + 1.5;
+    // tanpura: Pa - Sa - Sa - low Sa, one string every 1.2 s
+    const tan = [110, 146.83, 146.83, 73.42];
+    while (this.tanT < ahead) { this._pluck(this.tanT, tan[this.tanI++ % 4]); this.tanT += 1.2; }
+    // flute phrases with long, peaceful pauses
+    if (this.fluteT < ahead) {
+      const scale = [0, 2, 4, 7, 9, 12, 14, 16, 19]; // Sa Re Ga Pa Dha (Bhupali)
+      let idx = 2 + Math.floor(Math.random() * 4);
+      const n = 3 + Math.floor(Math.random() * 5), notes = [];
+      for (let k = 0; k < n; k++) {
+        idx = Math.max(0, Math.min(scale.length - 1, idx + [-2, -1, -1, 1, 1, 2][Math.floor(Math.random() * 6)]));
+        const dur = k === n - 1 ? 2.2 + Math.random() * 1.5 : 0.45 + Math.random() * 0.9;
+        notes.push([293.66 * Math.pow(2, scale[idx] / 12), dur]);
+      }
+      const end = this._flute(this.fluteT, notes);
+      this.fluteT = end + 3 + Math.random() * 6;
+    }
+  }
+  // ---------- nature sounds ----------
+  _chirp(t, pan) {
+    const ctx = this.ctx;
+    const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    const n = 2 + Math.floor(Math.random() * 5), base = 2600 + Math.random() * 1800;
+    for (let k = 0; k < n; k++) {
+      const tt = t + k * (0.09 + Math.random() * 0.06);
+      const o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(base, tt); o.frequency.exponentialRampToValueAtTime(base * (1.2 + Math.random() * 0.4), tt + 0.06);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, tt); g.gain.linearRampToValueAtTime(0.025, tt + 0.01); g.gain.exponentialRampToValueAtTime(0.0005, tt + 0.08);
+      o.connect(g); if (p) { g.connect(p); } else g.connect(this.master);
+      o.start(tt); o.stop(tt + 0.1);
+    }
+    if (p) { p.pan.value = pan; p.connect(this.master); p.connect(this._reverb()); }
+  }
+  _crickets(t) {
+    const ctx = this.ctx;
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 4400 + Math.random() * 600;
+    const am = ctx.createOscillator(); am.type = 'square'; am.frequency.value = 28;
+    const ag = ctx.createGain(); ag.gain.value = 0.5; am.connect(ag);
+    const g = ctx.createGain(); g.gain.value = 0;
+    ag.connect(g.gain);
+    o.connect(g); g.connect(this.master);
+    const env = ctx.createGain();
+    g.disconnect(); o.disconnect(); o.connect(g); g.connect(env); env.connect(this.master);
+    env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(0.012, t + 0.05); env.gain.setValueAtTime(0.012, t + 0.35); env.gain.linearRampToValueAtTime(0, t + 0.45);
+    for (const x of [o, am]) { x.start(t); x.stop(t + 0.5); }
+  }
+  nature(dt, kind) {
+    if (!this.ready || !kind) return;
+    this.natT = (this.natT ?? 2) - dt;
+    if (this.natT > 0) return;
+    const t = this.ctx.currentTime + 0.05;
+    if (kind === 'birds') { this._chirp(t, Math.random() * 1.6 - 0.8); this.natT = 2.5 + Math.random() * 5; }
+    else { this._crickets(t); this.natT = 0.7 + Math.random() * 1.6; }
+  }
+
   explosion() {
     if (!this.ready) return;
     this._noiseBurst('lowpass', 600, 0.5, 1.2, 0.01, 2.5);

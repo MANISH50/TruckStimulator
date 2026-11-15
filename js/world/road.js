@@ -1,7 +1,10 @@
 // Builds the road + ground for one 150 m chunk as a single vertex-coloured mesh.
 import * as THREE from 'three';
 import { VC_MAT, Builder } from '../util.js';
-import { STEP, ROAD_HALF } from './route.js';
+import { makeDetailMaterial } from './sky.js';
+
+const GROUND_MAT = makeDetailMaterial(0.17);
+import { STEP, ROAD_HALF, LANE } from './route.js';
 
 export const CHUNK = 75; // samples per chunk (150 m)
 // cross-section columns for sample i: they follow the road width (2 lanes in cities, 4 lanes divided elsewhere)
@@ -11,7 +14,7 @@ function offsets(route, i) {
 }
 // band kinds between the columns above
 const BANDS = ['g', 'g', 'g', 'g', 'g', 'v', 's', 'a', 'k', 'm', 'k', 'a', 's', 'v', 'g', 'g', 'g', 'g', 'g'];
-const MEDIAN = new THREE.Color('#5f8f3c'), KERB = new THREE.Color('#b8b4aa');
+const MEDIAN = new THREE.Color('#6f9a48'), KERB = new THREE.Color('#c9c5bb'), PAVED = new THREE.Color('#77797b'), SHOULDER_CITY = new THREE.Color('#86827b'), TRACK = new THREE.Color('#4a4c4f');
 
 const C = (h) => new THREE.Color(h);
 const ASPHALT = C('#4b4d50'), ASPHALT2 = C('#55575a'), SIDEWALK = C('#a9a49a'), URBAN = C('#8c8576'),
@@ -39,13 +42,13 @@ export function buildRoadChunk(route, c) {
       const k = route.k[q];
       if (Math.sign(k) === Math.sign(d)) kin = Math.max(kin, Math.abs(k));
     }
-    if (kin > 0) { const m = Math.max(9, 0.8 / kin); return Math.sign(d) * Math.min(Math.abs(d), m); }
+    if (kin > 0) { const m = Math.max(route.edge[i] + 5, 0.8 / kin); return Math.sign(d) * Math.min(Math.abs(d), m); }
     return d;
   };
   const pt = (i, d) => {
     const v = new THREE.Vector3();
     const h = route.h[i];
-    const dd = Math.abs(d) > 13 ? clampD(i, d) : d;
+    const dd = Math.abs(d) > route.edge[i] + 5 ? clampD(i, d) : d;
     v.set(route.x[i] + Math.cos(h) * dd, route.y[i] + route.sideH(i, dd), route.z[i] - Math.sin(h) * dd);
     return v;
   };
@@ -70,7 +73,7 @@ export function buildRoadChunk(route, c) {
       if (kind === 'a') col = ((i >> 2) % 3 === 0) ? ASPHALT2 : ASPHALT;
       else if (kind === 'm') col = MEDIAN;
       else if (kind === 'k') col = KERB;
-      else if (kind === 's') col = tmp.set(city ? '#7a7670' : th.shoulder).clone();
+      else if (kind === 's') col = city ? SHOULDER_CITY : PAVED;
       else if (kind === 'v' && city) col = SIDEWALK;
       else if (hill && Math.sign(mid) === hs) col = ad < 33 ? (j % 2 ? ROCK : ROCK2) : tmp.set(th.mountain).clone();
       else if (city) col = URBAN;
@@ -101,10 +104,15 @@ export function buildRoadChunk(route, c) {
     } else {
       // divided road: yellow lines along the median, dashed lane dividers
       strip(i, m + 0.1, m + 0.22, YELLOW); strip(i, -m - 0.22, -m - 0.1, YELLOW);
-      if (w > 0.6 && Math.floor(s / 6) % 2 === 0) { strip(i, m + 3.42, m + 3.56, WHITE); strip(i, -m - 3.56, -m - 3.42, WHITE); }
+      if (w > 0.6 && Math.floor(s / 6) % 2 === 0) { strip(i, m + LANE - 0.08, m + LANE + 0.08, WHITE); strip(i, -m - LANE - 0.08, -m - LANE + 0.08, WHITE); }
     }
     strip(i, e - 0.22, e - 0.1, WHITE);
     strip(i, -e + 0.1, -e + 0.22, WHITE);
+    // darker wheel tracks worn into each lane
+    for (const sg of [1, -1]) for (const ln of w > 0.6 ? [0, 1] : [0]) {
+      const c = Math.abs(route.laneD(s, sg, ln));
+      for (const o of [-1.0, 1.0]) strip(i, sg * (c + o) - 0.3, sg * (c + o) + 0.3, TRACK, 0.012);
+    }
   }
   // junctions: zebra crossings, stop lines and side roads
   for (const jn of route.junctions) {
@@ -119,7 +127,7 @@ export function buildRoadChunk(route, c) {
     }
     for (const sgn of [-1, 1]) {
       const zi = ji + sgn * 6;
-      if (zi >= i0 && zi < i1) for (let z = -3.2; z < 3.2; z += 0.9) strip(zi, z, z + 0.45, WHITE, 0.04);
+      if (zi >= i0 && zi < i1) for (let z = -ROAD_HALF + 0.4; z < ROAD_HALF - 0.4; z += 0.9) strip(zi, z, z + 0.45, WHITE, 0.04);
       const si = ji - sgn * 5;
       if (si >= i0 && si < i1) {
         if (sgn > 0) strip(si, 0.1, ROAD_HALF, WHITE, 0.04); else strip(si, -ROAD_HALF, -0.1, WHITE, 0.04);
@@ -139,7 +147,8 @@ export function buildRoadChunk(route, c) {
   g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(Col, 3));
   g.computeBoundingSphere();
-  const mesh = new THREE.Mesh(g, VC_MAT);
+  const mesh = new THREE.Mesh(g, GROUND_MAT);
+  mesh.receiveShadow = true;
 
   // crash barriers on the valley side in hills
   const bb = new Builder();

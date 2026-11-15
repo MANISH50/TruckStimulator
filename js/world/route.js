@@ -5,23 +5,28 @@ import { rng, clamp, smooth, hashStr, haversineKm } from '../util.js';
 import { STATES, THEMES, statePath, cityById } from '../data/cities.js';
 
 export const STEP = 2;            // metres between samples
-export const LANE = 3.5;
-export const ROAD_HALF = 3.6;     // asphalt half width
-export const SHOULDER = 5.6;
+export const LANE = 5.0;          // wide, easy lanes
+export const CITY_HALF = 5.1;     // city street: 2 lanes
+export const HWY_HALF = 10.8;     // divided highway: median 0.7 + 2 lanes + 0.1
+export const BASE_HALF = 3.6;     // width the roadside layout was designed around
+export const ROAD_HALF = CITY_HALF;
 
-export function tripInfo(fromId, toId) {
+export function tripInfo(fromId, toId, mode = 'truck') {
   const a = cityById(fromId), b = cityById(toId);
   const straight = haversineKm(a, b);
   const realKm = Math.round(straight * 1.25);
-  const gameM = Math.round(clamp(4000 + (realKm / 2500) * 8500, 4000, 12500));
+  const car = mode === 'car';
+  // long drives in a car are longer (about 15-25 min at car speeds)
+  const gameM = car ? Math.round(clamp(12000 + (realKm / 2500) * 16000, 12000, 28000)) : Math.round(clamp(4000 + (realKm / 2500) * 8500, 4000, 12500));
   const states = statePath(a.state, b.state);
-  const estSec = gameM / (46 / 3.6);
+  const estSec = gameM / ((car ? 75 : 46) / 3.6);
   return { from: a, to: b, realKm, gameM, states, estSec };
 }
 
 export class Route {
-  constructor(fromId, toId) {
-    const info = tripInfo(fromId, toId);
+  constructor(fromId, toId, mode = 'truck') {
+    const info = tripInfo(fromId, toId, mode);
+    this.mode = mode;
     Object.assign(this, info);
     this.seed = hashStr(fromId + '>' + toId);
     const R = rng(this.seed);
@@ -31,7 +36,7 @@ export class Route {
     this.length = this.PRE + info.gameM + this.POST;
     this.n = Math.ceil(this.length / STEP) + 1;
     this.bayS = this.length - 120;
-    this.bay = { s: this.bayS, d: 18, l: 26, w: 4.6 };
+    this.bay = { s: this.bayS, d: 18 + (CITY_HALF - BASE_HALF), l: 26, w: 4.6 };
     this._zones(R);
     this._widths();
     this._centreline(R);
@@ -98,16 +103,16 @@ export class Route {
       // a city section always fully 2 lanes, so the taper happens just outside it
       const f = raw[i] === 0 ? 0 : clamp((w - 0.5) * 2, 0, 1);
       this.wide[i] = smooth(f);
-      this.edge[i] = ROAD_HALF + 4.0 * this.wide[i];
+      this.edge[i] = CITY_HALF + (HWY_HALF - CITY_HALF) * this.wide[i];
       this.med[i] = 0.7 * this.wide[i];
     }
   }
-  extra(i) { return this.edge[i] - ROAD_HALF; }
+  extra(i) { return this.edge[i] - BASE_HALF; }
   extraAt(s) { return this.extra(this.idx(s)); }
   // centre of a lane: lane 0 = left (slow), lane 1 = right (fast); dir +1 = our direction (positive d)
   laneD(s, dir, lane) {
     const i = this.idx(s);
-    const d = lane === 0 ? this.edge[i] - 1.85 : 1.75 + this.med[i];
+    const d = lane === 0 ? this.edge[i] - 2.6 : LANE / 2 + this.med[i];
     return dir * d;
   }
 
@@ -143,14 +148,14 @@ export class Route {
         const r = R.range(250, 500), ang = R.range(0.15, 0.4); curve(ang * r, signBias() / r);
       } else if (z.type === 'hills') {
         curve(R.range(15, 50), 0);
-        const r = R.range(32, 70), ang = R.range(0.8, 1.6);
+        const r = R.range(42, 85), ang = R.range(0.8, 1.6);
         const sg = signBias();
-        if (r < 45) this.sharpTurns.push({ s: s, dir: sg });
+        if (r < 55) this.sharpTurns.push({ s: s, dir: sg });
         curve(ang * r, sg / r);
       } else {
         curve(R.range(140, 380), 0);
         if (R.chance(0.18)) {
-          const r = R.range(60, 95), ang = R.range(0.7, 1.2), sg = signBias();
+          const r = R.range(70, 110), ang = R.range(0.7, 1.2), sg = signBias();
           this.sharpTurns.push({ s: s, dir: sg });
           curve(ang * r, sg / r);
         } else {
@@ -299,7 +304,7 @@ export class Route {
         let free = false;
         for (const j of this.junctions) if (Math.abs(j.s - s) < 13) free = true;
         if (Math.abs(s - this.bayS) < 60) free = true;
-        if (!free) { this.limL[i] = 12.5; this.limR[i] = 12.5; }
+        if (!free) { this.limL[i] = 12.5 + this.extra(i); this.limR[i] = 12.5 + this.extra(i); }
         if (Math.abs(s - this.bayS) < 60) this.limL[i] = 1e9;
       }
     }
@@ -333,7 +338,7 @@ export class Route {
       if (hill) h = Math.min(45, (ad - e - 3) * 1.6) * a;
       else h = -Math.min(55, (ad - e - 3.6) * 0.9) * a;
     }
-    if (ad > 5.6 && ad < 8.2 && this.zones[this.zi[i]].type === 'city') h += 0.15;
+    if (ad > e + 2 && ad < e + 4.6 && this.zones[this.zi[i]].type === 'city') h += 0.15;
     if (ad < this.med[i] - 0.05) h += 0.15 * this.wide[i];
     return h;
   }

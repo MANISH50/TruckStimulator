@@ -108,7 +108,10 @@ export class Controls {
       const back = 380 * dt;
       this.wheelDeg = Math.abs(this.wheelDeg) < back ? 0 : this.wheelDeg - Math.sign(this.wheelDeg) * back;
     }
-    this.steer = this.wheelDeg / MAX_WHEEL;
+    // gentle response near the centre, full lock at the ends (expo curve)
+    const x = this.wheelDeg / MAX_WHEEL;
+    this.steer = Math.sign(x) * Math.pow(Math.abs(x), 1.5);
+    this.keySteer = !!(kl || kr);
     const acc = this.accHeld || k.ArrowUp || k.KeyW;
     const brk = this.brkHeld || k.ArrowDown || k.KeyS || k.Space;
     // pedals ramp smoothly

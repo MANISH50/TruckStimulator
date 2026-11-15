@@ -25,9 +25,10 @@ async function run(phone, scenario) {
   const tapEl = async (sel) => { const c = await center(sel); await touch('touchStart', [[c[0], c[1]]]); await page.waitForTimeout(60); await touch('touchEnd', []); await page.waitForTimeout(150); };
   const shot = (n) => page.screenshot({ path: `${out}/${phone.name}-${n}.png` });
   const g = (fn) => page.evaluate(fn);
-  const result = { phone: phone.name, scenario, checks: {} };
+  const waitDrive = async () => { for (let i = 0; i < 60; i++) { if (await page.evaluate(() => window.__game && window.__game.state) === 'drive') return; await page.waitForTimeout(250); } };
+  const result = { phone: phone.name, scenario: scenario.name, checks: {} };
   const check = (k, v) => { result.checks[k] = v; };
-  await scenario(page, { touch, center, tapEl, shot, g, check, base });
+  await scenario(page, { touch, center, tapEl, shot, g, check, base, waitDrive });
   result.errors = errors;
   await browser.close();
   return result;
@@ -62,7 +63,7 @@ const fullFlow = async (page, t) => {
   await t.tapEl('#sGo');
   await page.waitForTimeout(1500);
   await t.shot('08-loading');
-  await page.waitForTimeout(3000);
+  await t.waitDrive();
   t.check('state', await t.g(() => window.__game && window.__game.state));
   // controls test: clear traffic so the blind test drive cannot hit anything
   await t.g(() => { const g = window.__game; g.traffic.density = 0; g.traffic.list.slice().forEach((o) => g.traffic.remove(o)); });
@@ -129,11 +130,57 @@ const fullFlow = async (page, t) => {
   t.check('fps', await t.g(() => document.getElementById('fps').textContent));
 };
 
-const scenarios = { fullFlow };
+// Long Drive mode: car selection, route, cruise control, lane assist, parking win
+const longDrive = async (page, t) => {
+  await page.goto(t.base + '?debug=1');
+  await page.waitForTimeout(1200);
+  await t.tapEl('#bDrive');
+  await page.waitForTimeout(800);
+  t.check('garageTitle', await t.g(() => document.getElementById('gTitle').textContent));
+  await t.tapEl('#gNext'); await page.waitForTimeout(400);
+  t.check('car', await t.g(() => document.getElementById('tName').textContent));
+  await t.shot('ld-01-car');
+  await t.tapEl('#gGo'); await page.waitForTimeout(500);
+  t.check('skippedCargo', await t.g(() => !document.getElementById('route').classList.contains('hidden')));
+  await page.selectOption('#rFromSel', 'mumbai'); await page.selectOption('#rToSel', 'pune');
+  await t.tapEl('#rGo'); await page.waitForTimeout(400);
+  await t.shot('ld-02-summary');
+  await t.tapEl('#sGo');
+  await page.waitForTimeout(1000);
+  await t.waitDrive();
+  t.check('state', await t.g(() => window.__game && window.__game.state));
+  await t.g(() => { const g = window.__game; g.traffic.density = 0; g.traffic.list.slice().forEach((o) => g.traffic.remove(o)); });
+  // accelerate to cruising speed, then switch on cruise control and let go of everything
+  const acc = await t.center('#accel');
+  await t.touch('touchStart', [[acc[0], acc[1], 1]]);
+  await page.waitForTimeout(5000);
+  await t.touch('touchEnd', []);
+  const v0 = await t.g(() => window.__game.truck.speedKmh);
+  t.check('speedAfterAccel', Math.round(v0));
+  await t.tapEl('#bCruise');
+  t.check('cruiseSet', await t.g(() => window.__game.cruiseText()));
+  await page.waitForTimeout(6000);
+  t.check('speedHeldByCruise', await t.g(() => Math.round(window.__game.truck.speedKmh)));
+  t.check('laneAssistActive', await t.g(() => !!window.__game.assistActive));
+  t.check('stayedInLane', await t.g(() => window.__game.d.toFixed(2)));
+  await t.shot('ld-03-cruise');
+  // brake cancels cruise
+  const br = await t.center('#brake');
+  await t.touch('touchStart', [[br[0], br[1], 3]]); await page.waitForTimeout(400); await t.touch('touchEnd', []);
+  t.check('cruiseCancelled', await t.g(() => window.__game.cruiseText() === 0));
+  // park in the bay -> drive complete
+  await t.g(() => { const g = window.__game, r = g.route; g.teleport(r.bay.s + (g.totalLen / 2 - g.model.cabFront), r.bay.d); });
+  for (let i = 0; i < 40 && await t.g(() => window.__game.state) === 'drive'; i++) await page.waitForTimeout(250);
+  await page.waitForTimeout(500);
+  t.check('finish', await t.g(() => document.getElementById('winTitle').textContent));
+  await t.shot('ld-04-finish');
+};
+
+const scenarios = { fullFlow, longDrive };
 (async () => {
-  const which = process.argv[4] || 'fullFlow';
+  const which = (process.argv[4] || 'fullFlow,longDrive').split(',');
   const results = [];
-  for (const ph of PHONES.slice(0, Number(process.argv[5] || 2))) results.push(await run(ph, scenarios[which]));
+  for (const ph of PHONES.slice(0, Number(process.argv[5] || 2))) for (const w of which) results.push(await run(ph, scenarios[w]));
   console.log(JSON.stringify(results, null, 1));
   if (results.some((r) => r.errors.length)) process.exitCode = 1;
 })();

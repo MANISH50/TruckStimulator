@@ -69,12 +69,13 @@ export class CameraRig {
       while (dh > Math.PI) dh -= 2 * Math.PI; while (dh < -Math.PI) dh += 2 * Math.PI;
       this.chaseH += dh * Math.min(1, dt * 3.5);
       if (!this.inited) this.chaseH = bh;
-      const back = 9.5 + Math.min(4, Math.abs(truck.v) * 0.08);
-      pos.set(bx - Math.sin(this.chaseH) * back, truck.y + 4.6 + (model.trailer ? 0.6 : 0), bz - Math.cos(this.chaseH) * back);
-      look.set(truck.x + fwd.x * 8, truck.y + 2.0, truck.z + fwd.z * 8);
+      const car = !!model.car;
+      const back = (car ? 6.2 : 9.5) + Math.min(car ? 2.5 : 4, Math.abs(truck.v) * (car ? 0.04 : 0.08));
+      pos.set(bx - Math.sin(this.chaseH) * back, truck.y + (car ? 2.3 : 4.6) + (model.trailer ? 0.6 : 0), bz - Math.cos(this.chaseH) * back);
+      look.set(truck.x + fwd.x * (car ? 6 : 8), truck.y + (car ? 1.1 : 2.0), truck.z + fwd.z * (car ? 6 : 8));
     }
     if (!snap) {
-      const k = this.inited ? Math.min(1, dt * (this.view === 'back' ? 8 : 6)) : 1;
+      const k = this.inited ? Math.min(1, dt * (this.view === 'back' ? 3.5 : 3)) : 1; // soft, relaxed follow
       this.smoothPos.lerp(pos, k); this.smoothLook.lerp(look, k);
       if (!this.inited) { this.smoothPos.copy(pos); this.smoothLook.copy(look); this.inited = true; }
       cam.position.copy(this.smoothPos);
@@ -100,7 +101,7 @@ export class CameraRig {
       cam.position.lerpVectors(this.fromPos, cam.position, b);
       cam.quaternion.slerpQuaternions(this.fromQuat, cam.quaternion.clone(), b);
     }
-    const fov = this.view === 'driver' ? 72 : 60;
+    const fov = Math.round((this.view === 'driver' ? 72 : 60) + Math.min(7, Math.abs(truck.v) * 0.12));
     if (cam.fov !== fov) { cam.fov = fov; cam.updateProjectionMatrix(); }
     // what's visible
     model.cabShell.visible = this.view !== 'driver';
